@@ -1,0 +1,11 @@
+{
+  "terminal.integrated.profiles.windows": {
+    "Git Bash (Portable)": {
+      "path": "${workspaceFolder}/PortableGit/bin/bash.exe",
+      "args": ["--login", "-i"],
+      "icon": "terminal-bash"
+    }
+  },
+  "terminal.integrated.defaultProfile.windows": "Git Bash (Portable)"
+}
+
