@@ -207,6 +207,9 @@ export default function PBBridgeDashboard() {
   const [logs, setLogs] = useState<string[]>([]);
   const [progress, setProgress] = useState(0);
 
+  const [previewFile, setPreviewFile] = useState<{ name: string; size: string; content: string } | null>(null);
+  const [copiedPreview, setCopiedPreview] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
@@ -251,6 +254,18 @@ export default function PBBridgeDashboard() {
       alert("Only PowerBuilder source files (.srd, .srw, .sru, .srp) are supported.");
       return;
     }
+
+    // Read file content for preview using FileReader
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      setPreviewFile({
+        name: file.name,
+        size: `${(file.size / 1024).toFixed(1)} KB`,
+        content: text || ""
+      });
+    };
+    reader.readAsText(file);
 
     setIsConverting(true);
     setConvertingFileName(file.name);
@@ -677,6 +692,47 @@ export default function ${componentName}() {
             </table>
           </div>
         </section>
+
+        {/* Source Code Preview Section */}
+        {previewFile && (
+          <section className="bg-slate-900/40 border border-slate-800/80 rounded-2xl overflow-hidden backdrop-blur-md animate-in fade-in slide-in-from-bottom-4 duration-300">
+            <div className="p-6 border-b border-slate-800/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20">
+                  Source Preview
+                </span>
+                <h3 className="text-lg font-bold text-white tracking-tight mt-2 flex items-center gap-2">
+                  <span>{previewFile.name}</span>
+                  <span className="text-xs font-normal text-slate-400 font-mono">({previewFile.size})</span>
+                </h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(previewFile.content);
+                    setCopiedPreview(true);
+                    setTimeout(() => setCopiedPreview(false), 2000);
+                  }}
+                  className="px-4 py-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 hover:text-white rounded-lg text-xs font-semibold transition-all flex items-center gap-2"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                  </svg>
+                  {copiedPreview ? "Copied!" : "Copy Code"}
+                </button>
+                <button
+                  onClick={() => setPreviewFile(null)}
+                  className="px-4 py-2 bg-red-950/20 border border-red-900/30 text-red-400 hover:bg-red-900/30 rounded-lg text-xs font-semibold transition-all"
+                >
+                  Close Preview
+                </button>
+              </div>
+            </div>
+            <div className="p-5 font-mono text-xs text-slate-300 bg-[#090d16]/90 max-h-96 overflow-y-auto scrollbar-thin">
+              <pre className="whitespace-pre overflow-x-auto leading-relaxed">{previewFile.content}</pre>
+            </div>
+          </section>
+        )}
       </main>
 
       {/* Code / Error Log Modal */}
