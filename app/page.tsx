@@ -6,7 +6,7 @@
 // - 내부 구조체와 파서, 계산기 로직을 외부 파일에서 쏙쏙 뽑아와 가볍고 영리하게 UI만 구동합니다.
 // ---------------------------------------------------------------------------------------------------------
 import React, { useState, useEffect, useRef } from "react";
-import { ColumnInfo, ParsedPB } from "./types";
+import { ColumnInfo, ParsedPB, ArgumentInfo } from "./types";
 import { parsePBFile } from "./utils/parser";
 import { isNumericColumn, formatNumberWithCommas, evaluateDWExpression } from "./utils/expression";
 
@@ -75,6 +75,40 @@ export default function PBBridgeDashboard() {
     const [formData, setFormData] = useState<{ [key: string]: string }>({});
     const [gridData, setGridData] = useState<Array<{ [key: string]: string }>>([]);
 
+    // [Day 16 작업] 조회 인자(Retrieval Arguments) 실시간 바인딩 관련 React 상태 관리
+    // [초보자 가이드: 가변 개수 인풋 필드 동적 동기화 원리]
+    // 1. 파워빌더 소스 파일마다 선언되어 탐지되는 조회 인자(arguments)의 개수와 변수명이 매번 다릅니다. (예: :as_status, :an_sales 등)
+    // 2. 고정된 단일 React 상태로는 이를 유연하게 받아줄 수 없으므로, 객체의 Key-Value(키-값) 쌍 형태로 정보를 다루는 상태(`argValues`)를 사용합니다.
+    //    - 형태 예시: { as_status: "Closed", an_sales: "50000" }
+    // 3. 인풋 필드가 화면에 그려질 때, 각 인자명(name)을 Key로 사용하여 `value={argValues[arg.name] || ""}` 처럼 값을 연결해 줍니다.
+    // 4. 사용자가 인풋 창에 값을 타이핑하면(onChange), 이전 객체를 복사(`...prev`)하고, 변경이 일어난 인자명(argName)의 Key에만 새 value를 실시간으로 덮어씁니다.
+    //    - 코드 예시: `setArgValues(prev => ({ ...prev, [argName]: value }))`
+    // 5. 이 패턴을 이용하면 인자가 몇 개이든 상관없이 단 하나의 상태 변수와 핸들러로 깔끔하게 동기화가 이루어집니다.
+    const [argValues, setArgValues] = useState<{ [key: string]: string }>({});
+
+    const handleArgChange = (argName: string, value: string) => {
+        setArgValues((prev) => ({ ...prev, [argName]: value }));
+    };
+
+    useEffect(() => {
+        if (parsedData?.arguments?.length > 0) {
+            const initialArgs: { [key: string]: string } = {};
+            parsedData.arguments.forEach((arg) => {
+                // 기본값은 빈 문자열로 설정하되, dw_sales_summary.srd 데모 파일의 경우 동작 확인을 돕기 위해 예시 값을 미리 할당해 줍니다.
+                if (activeFileName === "dw_sales_summary.srd") {
+                    if (arg.name === "as_status") initialArgs[arg.name] = "Closed";
+                    else if (arg.name === "an_sales") initialArgs[arg.name] = "50000";
+                    else initialArgs[arg.name] = "";
+                } else {
+                    initialArgs[arg.name] = "";
+                }
+            });
+            setArgValues(initialArgs);
+        } else {
+            setArgValues({});
+        }
+    }, [parsedData.arguments, activeFileName]);
+
     useEffect(() => {
         if (parsedData?.columns?.length > 0) {
             const initialFormState: { [key: string]: string } = {};
@@ -136,13 +170,48 @@ export default function PBBridgeDashboard() {
         return formatted.split("\n").map(line => line.trim() ? (["SELECT", "FROM", "WHERE", "AND", "OR"].some(kw => new RegExp(`^${kw}$`, "i").test(line.trim())) ? line.trim().toUpperCase() : "    " + line.trim()) : "").filter(Boolean).join("\n");
     };
 
-    const highlightSQL = (sql: string): string => {
+    // [Day 16 작업] SQL 바인딩 변환부 및 하이라이터
+    // [초보자 가이드: SQL 실시간 바인딩 원리]
+    // 1. 사용자가 입력한 인자 값(argValues)을 SQL 쿼리 내 바인딩 변수(예: :as_status, :an_sales) 위치에 실시간으로 매핑해 줍니다.
+    // 2. 문자열 타입(string, char)인 경우에는 SQL 문법에 맞게 값 앞뒤에 홑따옴표(')를 자동으로 붙여 줍니다.
+    // 3. 사용자가 아직 아무것도 입력하지 않은 빈 값 상태라면 원래의 바인딩 변수명(:변수명)을 노출하여 SQL 구문 구조를 유지합니다.
+    // 4. 치환이 완료된 SQL 문자열에서 키워드(SELECT, FROM 등)와 바인딩된 값들을 각각 다른 색상의 HTML 태그로 감싸 시각적으로 돋보이게 만듭니다.
+    const highlightSQL = (sql: string, args: { [key: string]: string }, argDefs: ArgumentInfo[]): string => {
         if (!sql) return "";
         let escaped = sql.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+        // 1. 조회 인자(Retrieval Arguments)를 실시간 바인딩하여 치환
+        argDefs.forEach((arg) => {
+            const val = args[arg.name] !== undefined ? args[arg.name] : "";
+            const isString = arg.type.toLowerCase() === "string" || arg.type.toLowerCase() === "char";
+            
+            let displayVal = "";
+            let isPlaceholder = false;
+            if (val === "") {
+                displayVal = `:${arg.name}`;
+                isPlaceholder = true;
+            } else {
+                displayVal = isString ? `'${val}'` : val;
+            }
+            
+            const escapedVal = displayVal.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            
+            const spanClass = isPlaceholder 
+                ? "text-amber-500/70 italic underline decoration-dotted" 
+                : "text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 shadow-sm transition-all";
+                
+            escaped = escaped.replace(
+                new RegExp(`:${arg.name}\\b`, "g"), 
+                `<span class="${spanClass}">${escapedVal}</span>`
+            );
+        });
+
+        // 2. SQL 키워드 하이라이팅
         const keywords = ["SELECT", "FROM", "WHERE", "AND", "OR", "INSERT", "UPDATE", "DELETE", "JOIN"];
         keywords.forEach((keyword) => {
             escaped = escaped.replace(new RegExp(`\\b${keyword}\\b`, "gi"), `<span class="text-blue-400 font-bold">${keyword.toUpperCase()}</span>`);
         });
+        
         return escaped;
     };
 
@@ -152,7 +221,11 @@ export default function PBBridgeDashboard() {
         setSqlExecuteLog("Executing SQL query against simulated database...");
         setTimeout(() => {
             setIsExecutingSql(false);
-            setSqlExecuteLog(`▶ SQL 실행 완료 (성공)\n- 바인딩 변수: ${parsedData.arguments.map(a => `:${a.name}`).join(", ") || "없음"}`);
+            const bindDetails = parsedData.arguments.map(a => {
+                const val = argValues[a.name];
+                return `:${a.name} = ${val !== undefined && val !== "" ? `'${val}'` : "(NULL)"}`;
+            }).join(", ") || "없음";
+            setSqlExecuteLog(`▶ SQL 실행 완료 (성공)\n- 바인딩 변수 값: ${bindDetails}`);
         }, 800);
     };
 
@@ -240,52 +313,95 @@ export default function PBBridgeDashboard() {
                         <pre className="p-4 font-mono text-xs text-indigo-300 bg-[#05080f]/90 overflow-x-auto max-h-[400px] whitespace-pre">{activeFileContent}</pre>
                     </section>
 
-                    {/* 우측 분석 명세서 */}
-                    <section className="lg:col-span-7 flex flex-col bg-slate-900/40 border border-slate-900 rounded-2xl p-5 gap-4">
-                        <h3 className="text-sm font-bold text-white">🔍 파싱 정보 요약 보고서</h3>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-850">
-                                <span className="text-[10px] text-slate-500 block uppercase">타입</span>
-                                <span className="text-xs font-bold text-emerald-400 font-mono mt-1 block">{activeFileType}</span>
+                    {/* 우측 분석 명세 및 바인딩 입력란 컨테이너 */}
+                    <div className="lg:col-span-7 flex flex-col gap-6">
+                        {/* 파싱 정보 요약 보고서 */}
+                        <section className="flex flex-col bg-slate-900/40 border border-slate-900 rounded-2xl p-5 gap-4">
+                            <h3 className="text-sm font-bold text-white">🔍 파싱 정보 요약 보고서</h3>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-850">
+                                    <span className="text-[10px] text-slate-500 block uppercase">타입</span>
+                                    <span className="text-xs font-bold text-emerald-400 font-mono mt-1 block">{activeFileType}</span>
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-850">
+                                    <span className="text-[10px] text-slate-500 block uppercase">PB Release</span>
+                                    <span className="text-xs font-bold text-yellow-400 font-mono mt-1 block">{parsedData.release ? `v${parsedData.release}` : "미감지"}</span>
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-850">
+                                    <span className="text-[10px] text-slate-500 block uppercase font-mono">Columns</span>
+                                    <span className="text-xs font-bold text-indigo-400 font-mono mt-1 block">{parsedData.columns?.length || 0} EA</span>
+                                </div>
+                                <div className="bg-slate-950 p-3 rounded-xl border border-slate-850">
+                                    <span className="text-[10px] text-slate-500 block uppercase font-mono">Computed</span>
+                                    <span className="text-xs font-bold text-amber-400 font-mono mt-1 block">{parsedData.computedFields?.length || 0} EA</span>
+                                </div>
                             </div>
-                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-850">
-                                <span className="text-[10px] text-slate-500 block uppercase">PB Release</span>
-                                <span className="text-xs font-bold text-yellow-400 font-mono mt-1 block">{parsedData.release ? `v${parsedData.release}` : "미감지"}</span>
-                            </div>
-                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-850">
-                                <span className="text-[10px] text-slate-500 block uppercase font-mono">Columns</span>
-                                <span className="text-xs font-bold text-indigo-400 font-mono mt-1 block">{parsedData.columns?.length || 0} EA</span>
-                            </div>
-                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-850">
-                                <span className="text-[10px] text-slate-500 block uppercase font-mono">Computed</span>
-                                <span className="text-xs font-bold text-amber-400 font-mono mt-1 block">{parsedData.computedFields?.length || 0} EA</span>
-                            </div>
-                        </div>
 
-                        <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">분석된 컬럼 명세서</span>
-                                <input type="text" placeholder="컬럼 필터링..." value={columnSearch} onChange={(e) => setColumnSearch(e.target.value)} className="px-2.5 py-1 bg-slate-950 border border-slate-850 rounded text-xs text-white" />
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">분석된 컬럼 명세서</span>
+                                    <input type="text" placeholder="컬럼 필터링..." value={columnSearch} onChange={(e) => setColumnSearch(e.target.value)} className="px-2.5 py-1 bg-slate-950 border border-slate-850 rounded text-xs text-white" />
+                                </div>
+                                <div className="max-h-40 overflow-y-auto border border-slate-950 rounded-xl bg-slate-950/40 text-xs font-mono scrollbar-thin">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-950 text-slate-400 sticky top-0 font-bold">
+                                            <tr><th className="p-2 pl-4">No.</th><th className="p-2">컬럼명</th><th className="p-2">타입</th><th className="p-2">정렬</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            {filteredColumns.map((c, i) => (
+                                                <tr key={i} className="border-b border-slate-900/60 hover:bg-slate-800/40 text-slate-300">
+                                                    <td className="p-2 pl-4 text-slate-500">{i + 1}</td>
+                                                    <td className="p-2 font-bold text-indigo-300">{c.name}</td>
+                                                    <td className="p-2 text-slate-400">{c.type}</td>
+                                                    <td className="p-2 text-slate-400">{c.alignment === "1" ? "우측" : c.alignment === "2" ? "중앙" : "좌측"}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
-                            <div className="max-h-40 overflow-y-auto border border-slate-950 rounded-xl bg-slate-950/40 text-xs font-mono scrollbar-thin">
-                                <table className="w-full text-left">
-                                    <thead className="bg-slate-950 text-slate-400 sticky top-0 font-bold">
-                                        <tr><th className="p-2 pl-4">No.</th><th className="p-2">컬럼명</th><th className="p-2">타입</th><th className="p-2">정렬</th></tr>
-                                    </thead>
-                                    <tbody>
-                                        {filteredColumns.map((c, i) => (
-                                            <tr key={i} className="border-b border-slate-900/60 hover:bg-slate-800/40 text-slate-300">
-                                                <td className="p-2 pl-4 text-slate-500">{i + 1}</td>
-                                                <td className="p-2 font-bold text-indigo-300">{c.name}</td>
-                                                <td className="p-2 text-slate-400">{c.type}</td>
-                                                <td className="p-2 text-slate-400">{c.alignment === "1" ? "우측" : c.alignment === "2" ? "중앙" : "좌측"}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                        </section>
+
+                        {/* [Day 16 작업] Retrieval Arguments 실시간 바인딩 입력란 */}
+                        <section className="flex flex-col bg-slate-900/40 border border-slate-900 rounded-2xl p-5 gap-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                    <span>🔑 Retrieval Arguments 실시간 바인딩 입력란</span>
+                                </h3>
+                                <span className="px-2 py-0.5 text-[10px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded">
+                                    실시간 SQL & 연산 필드 바인딩 중
+                                </span>
                             </div>
-                        </div>
-                    </section>
+
+                            {parsedData.arguments && parsedData.arguments.length > 0 ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {parsedData.arguments.map((arg, idx) => (
+                                        <div key={idx} className="flex flex-col gap-1.5 bg-slate-950/40 p-3 rounded-xl border border-slate-900/60">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs font-bold text-indigo-300 font-mono flex items-center gap-1">
+                                                    <span className="text-indigo-500 text-[10px]">:</span>{arg.name}
+                                                </span>
+                                                <span className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-slate-900 text-slate-400 border border-slate-800">
+                                                    {arg.type}
+                                                </span>
+                                            </div>
+                                            <input
+                                                type="text"
+                                                className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-lg text-xs font-mono text-white placeholder-slate-600 transition-all shadow-inner"
+                                                placeholder={`${arg.type.toLowerCase() === 'number' ? '예: 50000 (숫자)' : '예: Closed (문자열)'}`}
+                                                value={argValues[arg.name] || ""}
+                                                onChange={(e) => handleArgChange(arg.name, e.target.value)}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-center py-6 text-slate-500 text-xs italic bg-slate-950/20 rounded-xl border border-dashed border-slate-900">
+                                    탐지된 조회용 인자(Retrieval Arguments)가 존재하지 않습니다.
+                                </div>
+                            )}
+                        </section>
+                    </div>
                 </div>
 
                 {/* SQL 에디터 섹션 */}
@@ -302,7 +418,7 @@ export default function PBBridgeDashboard() {
                         {parsedData.sqlError ? (
                             <span className="text-rose-500 italic">-- ⚠️ Retrieve 구문이 심각하게 파손되어 SQL을 분리하지 못했습니다. 상단 에러 상세 로그를 확인하세요.</span>
                         ) : parsedData.retrieveQuery ? (
-                            <pre className="text-emerald-400 whitespace-pre-wrap leading-relaxed"><code dangerouslySetInnerHTML={{ __html: highlightSQL(isSqlFormatted ? formatSQL(parsedData.retrieveQuery) : parsedData.retrieveQuery) }} /></pre>
+                            <pre className="text-emerald-400 whitespace-pre-wrap leading-relaxed"><code dangerouslySetInnerHTML={{ __html: highlightSQL(isSqlFormatted ? formatSQL(parsedData.retrieveQuery) : parsedData.retrieveQuery, argValues, parsedData.arguments) }} /></pre>
                         ) : (
                             <span className="text-zinc-600 italic">-- 파싱된 조회용 SQL 구문이 없습니다.</span>
                         )}
@@ -340,8 +456,17 @@ export default function PBBridgeDashboard() {
                                             </td>
                                         ))}
                                         {parsedData.computedFields.map((comp, cpIdx) => {
-                                            const res = evaluateDWExpression(comp.expression, row, parsedData.columns);
-                                            return <td key={cpIdx} className={`p-3 text-amber-400 font-bold bg-indigo-950/10 ${getAlignClass(comp.alignment)}`}>{typeof res === "number" ? res.toLocaleString() : res}</td>;
+                                            // [Day 16 작업] 수식 계산 시 조회 인자(Retrieval Arguments) 정보도 함께 넘겨주어 수식 내에서 사용 가능하게 바인딩
+                                            const mergedColumns = [
+                                                ...parsedData.columns,
+                                                ...parsedData.arguments.map(arg => ({
+                                                    name: arg.name,
+                                                    type: arg.type,
+                                                    dbname: arg.name
+                                                }))
+                                            ];
+                                            const res = evaluateDWExpression(comp.expression, { ...row, ...argValues }, mergedColumns);
+                                            return <td key={cpIdx} className={`p-3 text-amber-400 font-bold bg-indigo-950/10 ${getAlignClass(comp.alignment)}`} title={comp.expression}>{typeof res === "number" ? res.toLocaleString() : res}</td>;
                                         })}
                                     </tr>
                                 ))}
