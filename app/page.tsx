@@ -432,7 +432,25 @@ export default function PBBridgeDashboard() {
                     <div className="overflow-x-auto border border-slate-900 rounded-xl max-h-48 scrollbar-thin">
                         <table className="w-full text-left text-xs border-collapse">
                             <thead className="bg-slate-900 text-slate-400 font-bold sticky top-0 border-b border-slate-900">
-                                <tr>
+                                <tr
+                                    // [Day 17 작업] 레이아웃 헤더 밴드 높이 실시간 바인딩
+                                    // 웹린이(웹 초보자)를 위한 친절한 동작 원리 설명:
+                                    // 1. '인라인 스타일 바인딩'이란 무엇인가요?
+                                    //    - Tailwind CSS 클래스(예: h-10, h-12 등)는 빌드 타임에 정적으로 정해진 크기만 지원합니다. 
+                                    //    - 하지만 파워빌더 소스 파일에서 실시간으로 추출해 내는 동적 높이 값(예: header height=72)은 
+                                    //      미리 예측할 수 없기 때문에, JavaScript 변수를 HTML의 `style` 속성에 객체 형태로 직접 주입하는 
+                                    //      '인라인 스타일 바인딩(Inline Style Binding)' 방식을 사용합니다.
+                                    // 2. 파워빌더 Modify() 함수와의 공통점은?
+                                    //    - 파워빌더에서 실행 중에 화면 레이아웃의 높이를 조절할 때 사용하는 `dw_1.Modify("header.Height = '200'")`와
+                                    //      리액트의 `style={{ height: ... }}` 바인딩은 구조와 철학이 완벽히 동일합니다.
+                                    //    - 정적 스타일 시트에 의존하지 않고, 데이터나 파일 상태의 변화에 맞추어 런타임에 직접 브라우저 DOM 객체의
+                                    //      스타일 속성을 수정(Modify)하여 동적으로 렌더링하기 때문입니다.
+                                    // 3. 환산 및 Fallback 처리:
+                                    //    - 파워빌더 내부 높이 픽셀 단위를 웹 화면 비율에 맞추기 위해 높이 값을 2로 나눈 픽셀 값(height / 2)을 주입합니다.
+                                    //    - 파싱된 밴드 높이가 없는 비정상 파일이거나 데모 데이터가 비어 있을 경우를 대비하여 
+                                    //      삼항연산자를 이용해 기본 헤더 높이 "44px"을 fallback 값으로 안전하게 설정(방어)합니다.
+                                    style={{ height: parsedData?.bands?.header ? `${parsedData.bands.header / 2}px` : "44px" }}
+                                >
                                     <th className="p-3 text-center w-12">No.</th>
                                     {parsedData.columns.map((c, i) => <th key={i} className={`p-3 font-mono text-slate-300 ${getAlignClass(c.alignment)}`}>{c.label || c.name}</th>)}
                                     {parsedData.computedFields.map((comp, i) => <th key={i} className="p-3 text-amber-400 bg-indigo-950/20">🧮 {comp.label || comp.name}</th>)}
@@ -440,7 +458,25 @@ export default function PBBridgeDashboard() {
                             </thead>
                             <tbody className="divide-y divide-slate-900 text-slate-300">
                                 {gridData.map((row, rIdx) => (
-                                    <tr key={rIdx} className="hover:bg-slate-800 transition-all font-mono">
+                                    <tr
+                                        key={rIdx}
+                                        // [Day 17 작업] 레이아웃 디테일(본문 행) 밴드 높이 실시간 바인딩
+                                        // 웹린이(웹 초보자)를 위한 친절한 동작 원리 설명:
+                                        // 1. 인라인 스타일 구동 원리:
+                                        //    - React는 state나 prop 등의 데이터 변화를 실시간 감지하여 UI를 새로 그립니다.
+                                        //    - `parsedData.bands.detail`의 원본 데이터가 변경되면, `style={{ height: '...px' }}` 바인딩을 통해
+                                        //      브라우저가 렌더링한 실제 <tr> 태그의 style 속성에 픽셀 높이가 실시간으로 업데이트됩니다.
+                                        // 2. 파워빌더 Modify() 함수와의 공통점은?
+                                        //    - 파워빌더의 `dw_1.Modify("detail.Height = '150'")` 와 같이 실행 시점에 특정 밴드의 높이 속성을
+                                        //      바꾸어 동적으로 화면을 재구성하는 스크립트 기능과 동일하게 동작합니다.
+                                        //    - 렌더러가 런타임에 엘리먼트의 CSS 속성인 height 값을 직접 변경(Modify)하여 사용자에게 즉시 보여줍니다.
+                                        // 3. 환산 및 Fallback 처리:
+                                        //    - 파워빌더 원본 디테일 높이 값을 웹 표준 해상도에 어울리도록 2로 나눈 픽셀 값(height / 2)을 주입합니다.
+                                        //    - 밴드 본문(detail)의 높이 정보가 누락되어 있을 경우를 대비하여 
+                                        //      삼항연산자를 이용해 기본 본문 높이 "40px"을 fallback 값으로 지정하여 화면이 깨지는 것을 방어합니다.
+                                        style={{ height: parsedData?.bands?.detail ? `${parsedData.bands.detail / 2}px` : "40px" }}
+                                        className="hover:bg-slate-800 transition-all font-mono"
+                                    >
                                         <td className="p-3 text-center text-slate-600">{rIdx + 1}</td>
                                         {parsedData.columns.map((col, cIdx) => (
                                             <td key={cIdx} className="p-1">
