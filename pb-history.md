@@ -71,3 +71,10 @@
 ### [Day 17] 2026-06-08: DataWindow 밴드 높이(Height) 기반 프리뷰 UI 동적 매핑 구현 ◀ 진행 중
 - **주요 작업:** 파싱된 header/detail 밴드 높이 메타데이터를 활용하여 웹 프리뷰 그리드 행(Row)의 height 속성 실시간 인라인 스타일 바인딩 연동
 - **학습 내용:** 소스코드 내 주석에 작업 일자(Day 17) 기록 관리 지속, Tailwind CSS의 정적 한계를 극복하는 React Inline Style Binding 메커니즘 학습 및 파워빌더 Modify() 함수와의 공통점 이해
+
+### [Day 18] 2026-06-08: Tab Sequence 및 Protect 속성 기반 웹 포커스(tabIndex/readOnly) 제어 구현 ◀ 진행 중
+- **주요 작업:** `.srd` 파일 내 column의 tabsequence 및 protect 메타데이터 동시 추출 파서 보완, 웹 등록 폼 프리뷰 내 readOnly 및 tabIndex={-1} 속성 동적 매핑 완료
+- **학습 내용:** 소스코드 내 주석에 작업 일자(Day 18) 기록 관리 지속, 파워빌더의 Protect 제어 메커니즘을 웹 표준의 readOnly와 탭 스킵(tabIndex={-1}) 기술로 완벽 변환하는 융합 아키텍처 학습
+
+### [Day 19] 2026-06-09: Grid Preview 내 컬럼 Align 및 Protect 시각화 엔진 구현 ◀ 진행 중
+- **주요 작업:** 데이터윈도우 그리드 프리뷰 테이블 셀 단위 조건부 스타일링 도입, tabsequence/protect 상태에 따른 bg-slate-950 및 readOnly/tabIndex 제어 완벽 매핑
