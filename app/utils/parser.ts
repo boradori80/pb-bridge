@@ -34,11 +34,11 @@ export const decodePBHexString = (str: string): string => {
 export const getComputeProperties = (content: string): { [key: string]: string } => {
   const props: { [key: string]: string } = {};
   try {
-    const exprMatch = content.match(/expression\s*=\s*"((?:[^"]|~")*)"/i);
+    const exprMatch = content.match(/expression\s*=\s*"((?:[^"~]|~[\s\S])*)"/i);
     if (exprMatch) {
       props["expression"] = exprMatch[1].replace(/~"/g, '"');
     }
-    const propRegex = /([\w.]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
+    const propRegex = /([\w.]+)\s*=\s*(?:"((?:[^"~]|~[\s\S])*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
     let match;
     while ((match = propRegex.exec(content)) !== null) {
       const key = match[1].toLowerCase();
@@ -86,7 +86,7 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
     const dwMatch = text.match(/datawindow\s*\(([\s\S]*?)\)/i);
     if (dwMatch) {
       const dwContent = dwMatch[1];
-      const propRegex = /([\w.]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
+      const propRegex = /([\w.]+)\s*=\s*(?:"((?:[^"~]|~[\s\S])*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
       let match;
       while ((match = propRegex.exec(dwContent)) !== null) {
         result.datawindowProps[match[1]] = match[2] || match[3] || match[4] || "";
@@ -127,7 +127,7 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
       while ((colMatch = colRegex.exec(tableContent)) !== null) {
         const colContent = colMatch[1];
         const props: { [key: string]: string } = {};
-        const propRegex = /([\w.]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
+        const propRegex = /([\w.]+)\s*=\s*(?:"((?:[^"~]|~[\s\S])*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
         let pMatch;
         while ((pMatch = propRegex.exec(colContent)) !== null) {
           props[pMatch[1]] = pMatch[2] || pMatch[3] || pMatch[4] || "";
@@ -143,12 +143,15 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
     }
 
     // [Day 11 작업] 디자인 영역 정렬 매핑 파싱
+    const columnTabsequences: { [key: string]: string } = {};
+    const columnProtects: { [key: string]: string } = {};
+
     const layoutColRegex = /column\s*\(((?:[^()]+|\([^()]*\))*)\)/gi;
     let layoutColMatch;
     while ((layoutColMatch = layoutColRegex.exec(text)) !== null) {
       const colContent = layoutColMatch[1];
       const props: { [key: string]: string } = {};
-      const propRegex = /([\w.]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
+      const propRegex = /([\w.]+)\s*=\s*(?:"((?:[^"~]|~[\s\S])*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
       let pMatch;
       while ((pMatch = propRegex.exec(colContent)) !== null) {
         props[pMatch[1]] = pMatch[2] || pMatch[3] || pMatch[4] || "";
@@ -156,6 +159,8 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
       if (props.name) {
         const name = props.name.replace(/['"]/g, "");
         if (props.alignment) columnAlignments[name] = props.alignment.replace(/['"]/g, "");
+        if (props.tabsequence) columnTabsequences[name] = props.tabsequence.replace(/['"]/g, "");
+        if (props.protect) columnProtects[name] = props.protect.replace(/['"]/g, "");
       }
     }
 
@@ -165,7 +170,7 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
     while ((textMatch = textControlRegex.exec(text)) !== null) {
       const txtContent = textMatch[1];
       const props: { [key: string]: string } = {};
-      const propRegex = /([\w.]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
+      const propRegex = /([\w.]+)\s*=\s*(?:"((?:[^"~]|~[\s\S])*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
       let pMatch;
       while ((pMatch = propRegex.exec(txtContent)) !== null) {
         props[pMatch[1]] = pMatch[2] || pMatch[3] || pMatch[4] || "";
@@ -182,7 +187,9 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
     result.columns = result.columns.map(col => ({
       ...col,
       label: columnLabels[col.name] || undefined,
-      alignment: columnAlignments[col.name] || "0"
+      alignment: columnAlignments[col.name] || "0",
+      tabsequence: columnTabsequences[col.name] || undefined,
+      protect: columnProtects[col.name] || undefined
     }));
 
   } catch (err: any) {
@@ -191,7 +198,7 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
 
   // 4. SQL Retrieve 구문 파싱 (Try-Catch 격리)
   try {
-    const retrieveMatch = text.match(/retrieve\s*=\s*"([\s\S]*?)"/i);
+    const retrieveMatch = text.match(/retrieve\s*=\s*"((?:[^"~]|~[\s\S])*)"/i);
     if (retrieveMatch) {
       result.retrieveQuery = retrieveMatch[1].replace(/~"/g, '"');
     }

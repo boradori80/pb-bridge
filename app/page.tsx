@@ -257,6 +257,7 @@ export default function PBBridgeDashboard() {
     useEffect(() => {
         const data = parsePBFile(activeFileContent, activeFileName);
         setParsedData(data);
+        setActiveFileType(data.fileType);
         setColumnSearch("");
         setSqlExecuteLog(null);
         setIsSqlFormatted(false);
