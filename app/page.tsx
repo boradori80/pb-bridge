@@ -76,14 +76,6 @@ export default function PBBridgeDashboard() {
     const [gridData, setGridData] = useState<Array<{ [key: string]: string }>>([]);
 
     // [Day 16 작업] 조회 인자(Retrieval Arguments) 실시간 바인딩 관련 React 상태 관리
-    // [초보자 가이드: 가변 개수 인풋 필드 동적 동기화 원리]
-    // 1. 파워빌더 소스 파일마다 선언되어 탐지되는 조회 인자(arguments)의 개수와 변수명이 매번 다릅니다. (예: :as_status, :an_sales 등)
-    // 2. 고정된 단일 React 상태로는 이를 유연하게 받아줄 수 없으므로, 객체의 Key-Value(키-값) 쌍 형태로 정보를 다루는 상태(`argValues`)를 사용합니다.
-    //    - 형태 예시: { as_status: "Closed", an_sales: "50000" }
-    // 3. 인풋 필드가 화면에 그려질 때, 각 인자명(name)을 Key로 사용하여 `value={argValues[arg.name] || ""}` 처럼 값을 연결해 줍니다.
-    // 4. 사용자가 인풋 창에 값을 타이핑하면(onChange), 이전 객체를 복사(`...prev`)하고, 변경이 일어난 인자명(argName)의 Key에만 새 value를 실시간으로 덮어씁니다.
-    //    - 코드 예시: `setArgValues(prev => ({ ...prev, [argName]: value }))`
-    // 5. 이 패턴을 이용하면 인자가 몇 개이든 상관없이 단 하나의 상태 변수와 핸들러로 깔끔하게 동기화가 이루어집니다.
     const [argValues, setArgValues] = useState<{ [key: string]: string }>({});
 
     const handleArgChange = (argName: string, value: string) => {
@@ -94,7 +86,6 @@ export default function PBBridgeDashboard() {
         if (parsedData?.arguments?.length > 0) {
             const initialArgs: { [key: string]: string } = {};
             parsedData.arguments.forEach((arg) => {
-                // 기본값은 빈 문자열로 설정하되, dw_sales_summary.srd 데모 파일의 경우 동작 확인을 돕기 위해 예시 값을 미리 할당해 줍니다.
                 if (activeFileName === "dw_sales_summary.srd") {
                     if (arg.name === "as_status") initialArgs[arg.name] = "Closed";
                     else if (arg.name === "an_sales") initialArgs[arg.name] = "50000";
@@ -124,25 +115,14 @@ export default function PBBridgeDashboard() {
     };
 
     // [Day 18 작업] 파워빌더의 tabsequence 및 protect 속성을 분석하여 웹 표준 접근성 속성으로 동적 매핑하는 함수
-    // 초보자를 위한 웹 접근성 및 제어 매핑 상세 설명:
-    // 1. readOnly (읽기 전용 보호):
-    //    - 파워빌더의 'protect=1'은 사용자가 해당 데이터를 변경하지 못하도록 필드를 보호하는 설정입니다. 
-    //    - 파워빌더의 'tabsequence=0'은 포커스를 받지 못해 입력을 수행할 수 없으므로 사실상 수정 불가 상태를 의미합니다.
-    //    - 이 두 조건을 웹 표준과 융합하여 HTML의 'readOnly' 속성으로 매핑함으로써 데이터 입력을 논리적/물리적으로 제한합니다.
-    // 2. tabIndex (키보드 탭 제어 및 웹 접근성):
-    //    - 웹 접근성 지침에 따르면 사용자는 마우스 없이 키보드 'Tab' 키만으로 화면의 모든 입력 요소를 순서대로 탐색할 수 있어야 합니다.
-    //    - 'tabIndex={-1}' 설정 시, 해당 필드는 키보드 포커스 탐색 순서에서 완벽히 스킵(건너뛰기)됩니다. 읽기 전용이나 보호된 필드에 굳이 포커스가 들어가 사용자 경험을 해치는 것을 방지합니다.
-    //    - 일반 활성화 필드에는 파워빌더의 고유 탭 순서 값인 'tabsequence' 숫자를 정수 변환하여 'tabIndex'로 지정해 줌으로써, 기존 파워빌더 레거시 화면의 키보드 탭 키 이동 흐름을 브라우저에 그대로 복원시킬 수 있습니다.
     const renderDynamicInputField = (column: ColumnInfo) => {
         const colName = column.name;
         const type = (column.type || "").toLowerCase();
         const value = formData[colName] || "";
 
-        // [Day 18 작업] readOnly 및 tabIndex 값을 계산하는 비즈니스 로직 적용
         const isReadOnly = column.tabsequence === "0" || column.protect === "1";
         const currentTabIndex = isReadOnly ? -1 : parseInt(column.tabsequence || "0", 10);
 
-        // 읽기 전용 상태일 때는 약간 어둡고(opacity-60) 마우스 커서가 차단(cursor-not-allowed)되는 스타일을 동적으로 입혀 시각적 피드백을 강화합니다.
         const baseInputClass = `w-full px-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all ${isReadOnly ? "opacity-60 cursor-not-allowed select-none bg-slate-950" : ""
             }`;
 
@@ -221,16 +201,10 @@ export default function PBBridgeDashboard() {
     };
 
     // [Day 16 작업] SQL 바인딩 변환부 및 하이라이터
-    // [초보자 가이드: SQL 실시간 바인딩 원리]
-    // 1. 사용자가 입력한 인자 값(argValues)을 SQL 쿼리 내 바인딩 변수(예: :as_status, :an_sales) 위치에 실시간으로 매핑해 줍니다.
-    // 2. 문자열 타입(string, char)인 경우에는 SQL 문법에 맞게 값 앞뒤에 홑따옴표(')를 자동으로 붙여 줍니다.
-    // 3. 사용자가 아직 아무것도 입력하지 않은 빈 값 상태라면 원래의 바인딩 변수명(:변수명)을 노출하여 SQL 구문 구조를 유지합니다.
-    // 4. 치환이 완료된 SQL 문자열에서 키워드(SELECT, FROM 등)와 바인딩된 값들을 각각 다른 색상의 HTML 태그로 감싸 시각적으로 돋보이게 만듭니다.
     const highlightSQL = (sql: string, args: { [key: string]: string }, argDefs: ArgumentInfo[]): string => {
         if (!sql) return "";
         let escaped = sql.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-        // 1. 조회 인자(Retrieval Arguments)를 실시간 바인딩하여 치환
         argDefs.forEach((arg) => {
             const val = args[arg.name] !== undefined ? args[arg.name] : "";
             const isString = arg.type.toLowerCase() === "string" || arg.type.toLowerCase() === "char";
@@ -256,7 +230,6 @@ export default function PBBridgeDashboard() {
             );
         });
 
-        // 2. SQL 키워드 하이라이팅
         const keywords = ["SELECT", "FROM", "WHERE", "AND", "OR", "INSERT", "UPDATE", "DELETE", "JOIN"];
         keywords.forEach((keyword) => {
             escaped = escaped.replace(new RegExp(`\\b${keyword}\\b`, "gi"), `<span class="text-blue-400 font-bold">${keyword.toUpperCase()}</span>`);
@@ -323,7 +296,7 @@ export default function PBBridgeDashboard() {
                     </div>
                     <div>
                         <h1 className="text-xl font-black text-white">PB-Bridge Dashboard 🚀</h1>
-                        <p className="text-[10px] text-slate-500">Day 15 Modular Architecture Style</p>
+                        <p className="text-[10px] text-slate-500">Day 20 Stable - Form Key Warning Fixed</p>
                     </div>
                 </div>
             </header>
@@ -482,25 +455,7 @@ export default function PBBridgeDashboard() {
                     <div className="overflow-x-auto border border-slate-900 rounded-xl max-h-48 scrollbar-thin">
                         <table className="w-full text-left text-xs border-collapse">
                             <thead className="bg-slate-900 text-slate-400 font-bold sticky top-0 border-b border-slate-900">
-                                <tr
-                                    // [Day 17 작업] 레이아웃 헤더 밴드 높이 실시간 바인딩
-                                    // 웹린이(웹 초보자)를 위한 친절한 동작 원리 설명:
-                                    // 1. '인라인 스타일 바인딩'이란 무엇인가요?
-                                    //    - Tailwind CSS 클래스(예: h-10, h-12 등)는 빌드 타임에 정적으로 정해진 크기만 지원합니다. 
-                                    //    - 하지만 파워빌더 소스 파일에서 실시간으로 추출해 내는 동적 높이 값(예: header height=72)은 
-                                    //      미리 예측할 수 없기 때문에, JavaScript 변수를 HTML의 `style` 속성에 객체 형태로 직접 주입하는 
-                                    //      '인라인 스타일 바인딩(Inline Style Binding)' 방식을 사용합니다.
-                                    // 2. 파워빌더 Modify() 함수와의 공통점은?
-                                    //    - 파워빌더에서 실행 중에 화면 레이아웃의 높이를 조절할 때 사용하는 `dw_1.Modify("header.Height = '200'")`와
-                                    //      리액트의 `style={{ height: ... }}` 바인딩은 구조와 철학이 완벽히 동일합니다.
-                                    //    - 정적 스타일 시트에 의존하지 않고, 데이터나 파일 상태의 변화에 맞추어 런타임에 직접 브라우저 DOM 객체의
-                                    //      스타일 속성을 수정(Modify)하여 동적으로 렌더링하기 때문입니다.
-                                    // 3. 환산 및 Fallback 처리:
-                                    //    - 파워빌더 내부 높이 픽셀 단위를 웹 화면 비율에 맞추기 위해 높이 값을 2로 나눈 픽셀 값(height / 2)을 주입합니다.
-                                    //    - 파싱된 밴드 높이가 없는 비정상 파일이거나 데모 데이터가 비어 있을 경우를 대비하여 
-                                    //      삼항연산자를 이용해 기본 헤더 높이 "44px"을 fallback 값으로 안전하게 설정(방어)합니다.
-                                    style={{ height: parsedData?.bands?.header ? `${parsedData.bands.header / 2}px` : "44px" }}
-                                >
+                                <tr style={{ height: parsedData?.bands?.header ? `${parsedData.bands.header / 2}px` : "44px" }}>
                                     <th className="p-3 text-center w-12">No.</th>
                                     {parsedData.columns.map((c, i) => <th key={i} className={`p-3 font-mono text-slate-300 ${getAlignClass(c.alignment)}`}>{c.label || c.name}</th>)}
                                     {parsedData.computedFields.map((comp, i) => <th key={i} className="p-3 text-amber-400 bg-indigo-950/20">🧮 {comp.label || comp.name}</th>)}
@@ -509,6 +464,7 @@ export default function PBBridgeDashboard() {
                             <tbody className="divide-y divide-slate-900 text-slate-300">
                                 {gridData.map((row, rIdx) => (
                                     <tr
+                                        key={rIdx}
                                         style={{ height: parsedData?.bands?.detail ? `${parsedData.bands.detail / 2}px` : "40px" }}
                                         className="hover:bg-slate-800 transition-all font-mono"
                                     >
@@ -518,13 +474,9 @@ export default function PBBridgeDashboard() {
                                             const cellAlignClass = getAlignClass(col.alignment);
                                             const colType = (col.type || "").toLowerCase();
 
-                                            // [Day 20 작업] 데이터 타입별 동적 switch-case 조건부 렌더링
-                                            // 파워빌더(PowerBuilder)의 Column DataType 사양과 현대 웹 표준 HTML5 인풋 가변 타입 속성 대응 가이드:
-                                            // 1. 날짜형 (Date/Time/Timestamp): 파워빌더의 date, time, datetime 등은 현대 HTML5의 <input type="date">, <input type="time"> 등과 직결됩니다.
-                                            //    본 시스템에서는 'date', 'time', 'timestamp' 문구가 포함된 타입 감지 시 웹 표준 달력 인터페이스인 <input type="date">를 렌더링하여 날짜 선택 편의성을 극대화합니다.
-                                            // 2. 숫자형 (Decimal/Numeric/Int/Double 등): 파워빌더의 수치 데이터타입은 <input type="text">에 우측 정렬(text-right) 및 천단위 콤마 포맷팅(formatNumberWithCommas)을 융합 연동하여 ERP 환경 특유의 숫자 가독성을 확보합니다.
-                                            // 3. 문자열형 (Char/Varchar/기타): 일반 문자열 데이터는 기존의 기본적인 좌측 정렬(혹은 지정된 정렬) 기반 <input type="text">를 그대로 유지하여 일관된 텍스트 수정을 보장합니다.
-                                            // 4. 모든 인풋 컴포넌트는 readOnly 및 tabIndex 속성을 바인딩하여 18-19일차의 Protect/TabSequence 스펙을 철저히 상속하고 회색 암전 스타일(bg-slate-950/60)을 적용합니다.
+                                            // ---------------------------------------------------------------------------------------------------------
+                                            // [Day 20 작업] 데이터 타입별 동적 switch-case 조건부 렌더링 부품 배치 구역
+                                            // ---------------------------------------------------------------------------------------------------------
                                             const renderGridCellInput = () => {
                                                 const baseClass = "w-full bg-transparent px-2 py-1 text-xs border-0 focus:outline-none rounded transition-all";
                                                 const stateClass = isCellReadOnly
@@ -573,7 +525,6 @@ export default function PBBridgeDashboard() {
                                                     );
                                                 }
 
-                                                // 기본 문자열형
                                                 return (
                                                     <input
                                                         type="text"
@@ -583,10 +534,10 @@ export default function PBBridgeDashboard() {
                                                         onChange={(e) => {
                                                             if (isCellReadOnly) return;
                                                             setGridData(prev => {
-                                                                    const next = [...prev];
-                                                                    if (next[rIdx]) next[rIdx][col.name] = e.target.value;
-                                                                    return next;
-                                                                });
+                                                                const next = [...prev];
+                                                                if (next[rIdx]) next[rIdx][col.name] = e.target.value;
+                                                                return next;
+                                                            });
                                                         }}
                                                         className={`${baseClass} ${cellAlignClass} ${stateClass}`}
                                                     />
@@ -600,7 +551,6 @@ export default function PBBridgeDashboard() {
                                             );
                                         })}
                                         {parsedData.computedFields.map((comp, cpIdx) => {
-                                            // [Day 16 작업] 수식 계산 시 조회 인자(Retrieval Arguments) 정보도 함께 넘겨주어 수식 내에서 사용 가능하게 바인딩
                                             const mergedColumns = [
                                                 ...parsedData.columns,
                                                 ...parsedData.arguments.map(arg => ({
@@ -619,12 +569,13 @@ export default function PBBridgeDashboard() {
                     </div>
                 </section>
 
-                {/* 웹 폼 프리뷰 */}
+                {/* 📋 웹 등록 폼 화면 프리뷰 (Form Preview) */}
                 <section className="bg-slate-950/80 border border-slate-900 rounded-2xl overflow-hidden p-5 flex flex-col gap-4">
                     <h3 className="text-sm font-bold text-white">📋 웹 등록 폼 화면 프리뷰 (Form Preview)</h3>
                     {parsedData.columns.length > 0 ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/60 p-5 border border-slate-900 rounded-xl max-w-4xl mx-auto w-full">
                             {parsedData.columns.map((col, idx) => (
+                                // 📌 [Day 20 최적화] 개별 바구니 엘리먼트에 고유 식별 명찰(key={idx})을 명시하여 React 렌더링 경고를 소멸시킵니다.
                                 <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-900/40">
                                     <label className="sm:w-1/3 text-xs font-bold text-slate-300">{col.label || col.name}</label>
                                     <div className="sm:w-2/3">{renderDynamicInputField(col)}</div>
