@@ -78,3 +78,7 @@
 
 ### [Day 19] 2026-06-09: Grid Preview 내 컬럼 Align 및 Protect 시각화 엔진 구현 ◀ 진행 중
 - **주요 작업:** 데이터윈도우 그리드 프리뷰 테이블 셀 단위 조건부 스타일링 도입, tabsequence/protect 상태에 따른 bg-slate-950 및 readOnly/tabIndex 제어 완벽 매핑
+
+### [Day 20] 2026-06-10: Grid Preview 내 컬럼 DataType별 인풋(Input) 동적 스위칭 구현 ◀ 진행 중
+- **주요 작업:** 그리드 프리뷰 테이블 셀 단위 조건부 Switch-Case 분기 도입, date/datetime 타입 감지 시 표준 달력(<input type="date">) 팝업 동적 렌더링 및 숫자형 천단위 콤마 기능 완벽 격리 연동
+- **학습 내용:** 소스코드 내 주석에 작업 일자(Day 20) 기록 관리 지속, 파워빌더 컬럼 데이터 사양과 HTML5 가변 인풋 타입 시스템의 상호 매핑 원리 체득 및 그리드 컴포넌트 확장성 마스터

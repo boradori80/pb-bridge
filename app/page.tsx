@@ -137,23 +137,22 @@ export default function PBBridgeDashboard() {
         const colName = column.name;
         const type = (column.type || "").toLowerCase();
         const value = formData[colName] || "";
-        
+
         // [Day 18 작업] readOnly 및 tabIndex 값을 계산하는 비즈니스 로직 적용
         const isReadOnly = column.tabsequence === "0" || column.protect === "1";
         const currentTabIndex = isReadOnly ? -1 : parseInt(column.tabsequence || "0", 10);
-        
+
         // 읽기 전용 상태일 때는 약간 어둡고(opacity-60) 마우스 커서가 차단(cursor-not-allowed)되는 스타일을 동적으로 입혀 시각적 피드백을 강화합니다.
-        const baseInputClass = `w-full px-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all ${
-            isReadOnly ? "opacity-60 cursor-not-allowed select-none bg-slate-950" : ""
-        }`;
+        const baseInputClass = `w-full px-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all ${isReadOnly ? "opacity-60 cursor-not-allowed select-none bg-slate-950" : ""
+            }`;
 
         if (type.includes("date") || type.includes("time") || type.includes("timestamp")) {
             return (
-                <input 
-                    type="date" 
-                    className={baseInputClass} 
-                    value={value} 
-                    onChange={(e) => !isReadOnly && handleFormInputChange(colName, e.target.value)} 
+                <input
+                    type="date"
+                    className={baseInputClass}
+                    value={value}
+                    onChange={(e) => !isReadOnly && handleFormInputChange(colName, e.target.value)}
                     readOnly={isReadOnly}
                     tabIndex={currentTabIndex}
                 />
@@ -161,24 +160,24 @@ export default function PBBridgeDashboard() {
         }
         if (isNumericColumn(type)) {
             return (
-                <input 
-                    type="text" 
-                    className={baseInputClass} 
-                    placeholder={isReadOnly ? "보호된 필드" : "숫자 입력"} 
-                    value={formatNumberWithCommas(value)} 
-                    onChange={(e) => !isReadOnly && handleFormInputChange(colName, formatNumberWithCommas(e.target.value))} 
+                <input
+                    type="text"
+                    className={baseInputClass}
+                    placeholder={isReadOnly ? "보호된 필드" : "숫자 입력"}
+                    value={formatNumberWithCommas(value)}
+                    onChange={(e) => !isReadOnly && handleFormInputChange(colName, formatNumberWithCommas(e.target.value))}
                     readOnly={isReadOnly}
                     tabIndex={currentTabIndex}
                 />
             );
         }
         return (
-            <input 
-                type="text" 
-                className={baseInputClass} 
-                placeholder={isReadOnly ? "보호된 필드" : "텍스트 입력"} 
-                value={value} 
-                onChange={(e) => !isReadOnly && handleFormInputChange(colName, e.target.value)} 
+            <input
+                type="text"
+                className={baseInputClass}
+                placeholder={isReadOnly ? "보호된 필드" : "텍스트 입력"}
+                value={value}
+                onChange={(e) => !isReadOnly && handleFormInputChange(colName, e.target.value)}
                 readOnly={isReadOnly}
                 tabIndex={currentTabIndex}
             />
@@ -192,6 +191,10 @@ export default function PBBridgeDashboard() {
 
     const getSampleValueForColumn = (column: ColumnInfo, rowIndex: number): string => {
         const r = rowIndex + 1;
+        const colType = (column.type || "").toLowerCase();
+        if (colType.includes("date") || colType.includes("time") || colType.includes("timestamp")) {
+            return `2026-06-${String(10 + rowIndex).padStart(2, "0")}`;
+        }
         if (isNumericColumn(column.type)) return (r * 12500).toLocaleString();
         if (column.name.toLowerCase().includes("status")) return "Closed";
         return `${column.name} ${r}`;
@@ -231,7 +234,7 @@ export default function PBBridgeDashboard() {
         argDefs.forEach((arg) => {
             const val = args[arg.name] !== undefined ? args[arg.name] : "";
             const isString = arg.type.toLowerCase() === "string" || arg.type.toLowerCase() === "char";
-            
+
             let displayVal = "";
             let isPlaceholder = false;
             if (val === "") {
@@ -240,15 +243,15 @@ export default function PBBridgeDashboard() {
             } else {
                 displayVal = isString ? `'${val}'` : val;
             }
-            
+
             const escapedVal = displayVal.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            
-            const spanClass = isPlaceholder 
-                ? "text-amber-500/70 italic underline decoration-dotted" 
+
+            const spanClass = isPlaceholder
+                ? "text-amber-500/70 italic underline decoration-dotted"
                 : "text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 shadow-sm transition-all";
-                
+
             escaped = escaped.replace(
-                new RegExp(`:${arg.name}\\b`, "g"), 
+                new RegExp(`:${arg.name}\\b`, "g"),
                 `<span class="${spanClass}">${escapedVal}</span>`
             );
         });
@@ -258,7 +261,7 @@ export default function PBBridgeDashboard() {
         keywords.forEach((keyword) => {
             escaped = escaped.replace(new RegExp(`\\b${keyword}\\b`, "gi"), `<span class="text-blue-400 font-bold">${keyword.toUpperCase()}</span>`);
         });
-        
+
         return escaped;
     };
 
@@ -506,69 +509,93 @@ export default function PBBridgeDashboard() {
                             <tbody className="divide-y divide-slate-900 text-slate-300">
                                 {gridData.map((row, rIdx) => (
                                     <tr
-                                        key={rIdx}
-                                        // [Day 17 작업] 레이아웃 디테일(본문 행) 밴드 높이 실시간 바인딩
-                                        // 웹린이(웹 초보자)를 위한 친절한 동작 원리 설명:
-                                        // 1. 인라인 스타일 구동 원리:
-                                        //    - React는 state나 prop 등의 데이터 변화를 실시간 감지하여 UI를 새로 그립니다.
-                                        //    - `parsedData.bands.detail`의 원본 데이터가 변경되면, `style={{ height: '...px' }}` 바인딩을 통해
-                                        //      브라우저가 렌더링한 실제 <tr> 태그의 style 속성에 픽셀 높이가 실시간으로 업데이트됩니다.
-                                        // 2. 파워빌더 Modify() 함수와의 공통점은?
-                                        //    - 파워빌더의 `dw_1.Modify("detail.Height = '150'")` 와 같이 실행 시점에 특정 밴드의 높이 속성을
-                                        //      바꾸어 동적으로 화면을 재구성하는 스크립트 기능과 동일하게 동작합니다.
-                                        //    - 렌더러가 런타임에 엘리먼트의 CSS 속성인 height 값을 직접 변경(Modify)하여 사용자에게 즉시 보여줍니다.
-                                        // 3. 환산 및 Fallback 처리:
-                                        //    - 파워빌더 원본 디테일 높이 값을 웹 표준 해상도에 어울리도록 2로 나눈 픽셀 값(height / 2)을 주입합니다.
-                                        //    - 밴드 본문(detail)의 높이 정보가 누락되어 있을 경우를 대비하여 
-                                        //      삼항연산자를 이용해 기본 본문 높이 "40px"을 fallback 값으로 지정하여 화면이 깨지는 것을 방어합니다.
                                         style={{ height: parsedData?.bands?.detail ? `${parsedData.bands.detail / 2}px` : "40px" }}
                                         className="hover:bg-slate-800 transition-all font-mono"
                                     >
                                         <td className="p-3 text-center text-slate-600">{rIdx + 1}</td>
                                         {parsedData.columns.map((col, cIdx) => {
-                                            // [Day 19 작업] 파워빌더 Cell 단위의 정렬 및 조건부 프로텍트(Protect) 웹 연동 로직
-                                            // -----------------------------------------------------------------------------------------
-                                            // 초보자를 위한 파워빌더와 React의 Protect/Style 매핑 원리 가이드:
-                                            // 1. 파워빌더의 Protect 원리:
-                                            //    - 파워빌더 데이터윈도우(DataWindow)는 각 컬럼/셀마다 `protect` 속성이나 `tabsequence`를 가집니다.
-                                            //    - `protect` 속성이 '1'이거나 `tabsequence`가 '0'이면 사용자가 해당 셀의 값을 임의로 바꿀 수 없는 '보호 상태'가 됩니다.
-                                            //    - 파워빌더는 런타임에 이 조건식을 평가하여, 해당 셀에 포커스가 가지 않도록 막고 비활성화된 시각적 스타일(예: 배경색 변경)을 적용합니다.
-                                            // 2. React/Web 표준의 구현 (조건부 렌더링 & readOnly & tabIndex):
-                                            //    - 웹 브라우저에서도 이와 동일한 제어를 하기 위해 HTML 표준 속성인 `readOnly`와 `tabIndex`를 활용합니다.
-                                            //    - `readOnly={isReadOnly}`: 브라우저 레벨에서 사용자가 텍스트를 입력하거나 수정할 수 없도록 논리적/물리적으로 편집을 전면 차단합니다.
-                                            //    - `tabIndex={isReadOnly ? -1 : undefined}`: 키보드로 탭 이동 시, 보호된 셀은 탐색 순서에서 아예 건너뛰도록(Focus Skip) 처리하여 웹 접근성 경험을 개선합니다.
-                                            // 3. 조건부 스타일링 (Conditional Styling):
-                                            //    - React의 상태(state) 변화에 맞춰 Tailwind CSS 클래스를 동적으로 조합하여 실시간으로 UI를 다르게 보여줍니다.
-                                            //    - 보호된 셀(isReadOnly === true): 어두운 배경(`bg-slate-950/60`), 흐린 글자색(`text-slate-500`), 금지 마우스 커서(`cursor-not-allowed`) 스타일을 적용하여 편집할 수 없음을 시각적으로 바로 알립니다.
-                                            //    - 활성 셀(isReadOnly === false): 입력 가능함을 나타내도록 배경을 투명하게(`bg-transparent`), 글자색을 밝게(`text-white`), 포커스 시 테두리 하이라이트(`focus:ring-1 focus:ring-indigo-500`)를 켜서 대비시킵니다.
-                                            // 4. 정렬 연동 (Alignment):
-                                            //    - 파워빌더의 `alignment` 속성값(0: 좌측, 1: 우측, 2: 중앙)을 `getAlignClass(col.alignment)` 함수를 통해 Tailwind CSS 정렬 클래스(`text-left`, `text-right`, `text-center`)로 실시간 변환하여 적용합니다.
-                                            // -----------------------------------------------------------------------------------------
-                                            const isReadOnly = col.tabsequence === "0" || col.protect === "1";
-                                            const cellClass = `w-full px-2 py-1 text-xs border-0 rounded ${getAlignClass(col.alignment)} ${
-                                                isReadOnly 
-                                                    ? "bg-slate-950/60 text-slate-500 cursor-not-allowed select-none" 
-                                                    : "bg-transparent text-white focus:ring-1 focus:ring-indigo-500"
-                                            }`;
+                                            const isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
+                                            const cellAlignClass = getAlignClass(col.alignment);
+                                            const colType = (col.type || "").toLowerCase();
 
-                                            return (
-                                                <td key={cIdx} className="p-1">
+                                            // [Day 20 작업] 데이터 타입별 동적 switch-case 조건부 렌더링
+                                            // 파워빌더(PowerBuilder)의 Column DataType 사양과 현대 웹 표준 HTML5 인풋 가변 타입 속성 대응 가이드:
+                                            // 1. 날짜형 (Date/Time/Timestamp): 파워빌더의 date, time, datetime 등은 현대 HTML5의 <input type="date">, <input type="time"> 등과 직결됩니다.
+                                            //    본 시스템에서는 'date', 'time', 'timestamp' 문구가 포함된 타입 감지 시 웹 표준 달력 인터페이스인 <input type="date">를 렌더링하여 날짜 선택 편의성을 극대화합니다.
+                                            // 2. 숫자형 (Decimal/Numeric/Int/Double 등): 파워빌더의 수치 데이터타입은 <input type="text">에 우측 정렬(text-right) 및 천단위 콤마 포맷팅(formatNumberWithCommas)을 융합 연동하여 ERP 환경 특유의 숫자 가독성을 확보합니다.
+                                            // 3. 문자열형 (Char/Varchar/기타): 일반 문자열 데이터는 기존의 기본적인 좌측 정렬(혹은 지정된 정렬) 기반 <input type="text">를 그대로 유지하여 일관된 텍스트 수정을 보장합니다.
+                                            // 4. 모든 인풋 컴포넌트는 readOnly 및 tabIndex 속성을 바인딩하여 18-19일차의 Protect/TabSequence 스펙을 철저히 상속하고 회색 암전 스타일(bg-slate-950/60)을 적용합니다.
+                                            const renderGridCellInput = () => {
+                                                const baseClass = "w-full bg-transparent px-2 py-1 text-xs border-0 focus:outline-none rounded transition-all";
+                                                const stateClass = isCellReadOnly
+                                                    ? "bg-slate-950/60 text-slate-500 cursor-not-allowed italic"
+                                                    : "text-white focus:ring-1 focus:ring-indigo-500";
+                                                const tabIndexValue = isCellReadOnly ? -1 : 0;
+
+                                                if (colType.includes("date") || colType.includes("time") || colType.includes("timestamp")) {
+                                                    return (
+                                                        <input
+                                                            type="date"
+                                                            value={row[col.name] ?? ""}
+                                                            readOnly={isCellReadOnly}
+                                                            tabIndex={tabIndexValue}
+                                                            onChange={(e) => {
+                                                                if (isCellReadOnly) return;
+                                                                setGridData(prev => {
+                                                                    const next = [...prev];
+                                                                    if (next[rIdx]) next[rIdx][col.name] = e.target.value;
+                                                                    return next;
+                                                                });
+                                                            }}
+                                                            className={`${baseClass} ${cellAlignClass} ${stateClass}`}
+                                                        />
+                                                    );
+                                                }
+
+                                                if (isNumericColumn(col.type)) {
+                                                    return (
+                                                        <input
+                                                            type="text"
+                                                            value={formatNumberWithCommas(row[col.name] ?? "")}
+                                                            readOnly={isCellReadOnly}
+                                                            tabIndex={tabIndexValue}
+                                                            onChange={(e) => {
+                                                                if (isCellReadOnly) return;
+                                                                const val = formatNumberWithCommas(e.target.value);
+                                                                setGridData(prev => {
+                                                                    const next = [...prev];
+                                                                    if (next[rIdx]) next[rIdx][col.name] = val;
+                                                                    return next;
+                                                                });
+                                                            }}
+                                                            className={`${baseClass} text-right ${stateClass}`}
+                                                        />
+                                                    );
+                                                }
+
+                                                // 기본 문자열형
+                                                return (
                                                     <input
                                                         type="text"
-                                                        value={isNumericColumn(col.type) ? formatNumberWithCommas(row[col.name] ?? "") : (row[col.name] ?? "")}
+                                                        value={row[col.name] ?? ""}
+                                                        readOnly={isCellReadOnly}
+                                                        tabIndex={tabIndexValue}
                                                         onChange={(e) => {
-                                                            if (isReadOnly) return;
-                                                            const val = e.target.value;
-                                                            setGridData(prev => { 
-                                                                const next = [...prev]; 
-                                                                if (next[rIdx]) next[rIdx][col.name] = val; 
-                                                                return next; 
-                                                            });
+                                                            if (isCellReadOnly) return;
+                                                            setGridData(prev => {
+                                                                    const next = [...prev];
+                                                                    if (next[rIdx]) next[rIdx][col.name] = e.target.value;
+                                                                    return next;
+                                                                });
                                                         }}
-                                                        readOnly={isReadOnly}
-                                                        tabIndex={isReadOnly ? -1 : undefined}
-                                                        className={cellClass}
+                                                        className={`${baseClass} ${cellAlignClass} ${stateClass}`}
                                                     />
+                                                );
+                                            };
+
+                                            return (
+                                                <td key={cIdx} className="p-1 border-r border-slate-900/40">
+                                                    {renderGridCellInput()}
                                                 </td>
                                             );
                                         })}
