@@ -76,9 +76,14 @@ export const evaluateDWExpression = (
 
     // 파워빌더의 if 함수 패턴을 자바스크립트의 삼항연산자(condition ? trueVal : falseVal)로 변환
     let prevExpr;
+    let loopCount = 0;
     do {
       prevExpr = expr;
       expr = expr.replace(/if\s*\(([^,]+),([^,]+),([^)]+)\)/g, "($1 ? $2 : $3)");
+      loopCount++;
+      if (loopCount > 100) {
+        break; // 무한 루프 강제 탈출 안전장치
+      }
     } while (expr !== prevExpr);
 
     // 동적으로 코드 평가 실행

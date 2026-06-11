@@ -44,6 +44,24 @@ export default function FormPreview({
           onChange={(e) =>
             !isReadOnly && onFormInputChange(colName, e.target.value)
           }
+          onClick={(e) => {
+            if (!isReadOnly) {
+              try {
+                e.currentTarget.showPicker();
+              } catch (err) {
+                // 구형 브라우저 지원 방어
+              }
+            }
+          }}
+          onFocus={(e) => {
+            if (!isReadOnly) {
+              try {
+                e.currentTarget.showPicker();
+              } catch (err) {
+                // 구형 브라우저 지원 방어
+              }
+            }
+          }}
           readOnly={isReadOnly}
           tabIndex={currentTabIndex}
         />

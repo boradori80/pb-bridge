@@ -107,6 +107,24 @@ export default function GridPreview({
                               return next;
                             });
                           }}
+                          onClick={(e) => {
+                            if (!isCellReadOnly) {
+                              try {
+                                e.currentTarget.showPicker();
+                              } catch (err) {
+                                // 예외 방어
+                              }
+                            }
+                          }}
+                          onFocus={(e) => {
+                            if (!isCellReadOnly) {
+                              try {
+                                e.currentTarget.showPicker();
+                              } catch (err) {
+                                // 예외 방어
+                              }
+                            }
+                          }}
                           className={`${baseClass} ${cellAlignClass} ${stateClass}`}
                         />
                       );

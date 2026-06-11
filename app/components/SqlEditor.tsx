@@ -57,33 +57,39 @@ export default function SqlEditor({
       .replace(/>/g, "&gt;");
 
     argDefs.forEach((arg) => {
-      const val = args[arg.name] !== undefined ? args[arg.name] : "";
-      const isString =
-        arg.type.toLowerCase() === "string" ||
-        arg.type.toLowerCase() === "char";
+      try {
+        if (!arg.name) return;
+        const val = args[arg.name] !== undefined ? args[arg.name] : "";
+        const isString =
+          arg.type.toLowerCase() === "string" ||
+          arg.type.toLowerCase() === "char";
 
-      let displayVal = "";
-      let isPlaceholder = false;
-      if (val === "") {
-        displayVal = `:${arg.name}`;
-        isPlaceholder = true;
-      } else {
-        displayVal = isString ? `'${val}'` : val;
+        let displayVal = "";
+        let isPlaceholder = false;
+        if (val === "") {
+          displayVal = `:${arg.name}`;
+          isPlaceholder = true;
+        } else {
+          displayVal = isString ? `'${val}'` : val;
+        }
+
+        const escapedVal = displayVal
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+
+        const spanClass = isPlaceholder
+          ? "text-amber-500/70 italic underline decoration-dotted"
+          : "text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 shadow-sm transition-all";
+
+        const safeName = arg.name.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+        escaped = escaped.replace(
+          new RegExp(`:${safeName}\\b`, "g"),
+          `<span class="${spanClass}">${escapedVal}</span>`
+        );
+      } catch (err) {
+        // 예외 방어
       }
-
-      const escapedVal = displayVal
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-
-      const spanClass = isPlaceholder
-        ? "text-amber-500/70 italic underline decoration-dotted"
-        : "text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 shadow-sm transition-all";
-
-      escaped = escaped.replace(
-        new RegExp(`:${arg.name}\\b`, "g"),
-        `<span class="${spanClass}">${escapedVal}</span>`
-      );
     });
 
     const keywords = [
