@@ -82,3 +82,7 @@
 ### [Day 20] 2026-06-10: Grid Preview 내 컬럼 DataType별 인풋(Input) 동적 스위칭 구현 ◀ 진행 중
 - **주요 작업:** 그리드 프리뷰 테이블 셀 단위 조건부 Switch-Case 분기 도입, date/datetime 타입 감지 시 표준 달력(<input type="date">) 팝업 동적 렌더링 및 숫자형 천단위 콤마 기능 완벽 격리 연동
 - **학습 내용:** 소스코드 내 주석에 작업 일자(Day 20) 기록 관리 지속, 파워빌더 컬럼 데이터 사양과 HTML5 가변 인풋 타입 시스템의 상호 매핑 원리 체득 및 그리드 컴포넌트 확장성 마스터
+
+### [Day 21] 2026-06-11: 단일 page.tsx 대규모 UI 컴포넌트 모듈화 분할 완료 ◀ 진행 중
+- **주요 작업:** 거대했던 메인 대시보드를 5대 독립 컴포넌트(SourceEditor, ParsingSummary, SqlEditor, GridPreview, FormPreview)로 완벽 격리 해체 후 부모 page.tsx에서 Props 단방향 조립 구조 구축
+- **학습 내용:** 복잡한 Next.js 상태 제어 흐름의 컴포넌트 쪼개기(Component화) 기법 습득, 파일별 책임 분리를 통한 가독성 개선 및 상용 ERP 수준의 유지보수 확장성 마스터
