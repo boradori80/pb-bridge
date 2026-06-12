@@ -53,6 +53,64 @@ export const getComputeProperties = (content: string): { [key: string]: string }
 };
 
 /**
+ * 주어진 접두사(예: "column", "text", "compute") 뒤의 균형 잡힌 괄호 안의 내용을 추출하는 함수
+ * 정규식 백트래킹 지옥(Catastrophic Backtracking)을 방지하기 위해 스택/인덱스 카운팅 기반으로 구현합니다.
+ */
+export const extractBalancedBlocks = (text: string, prefix: string): string[] => {
+  const blocks: string[] = [];
+  let index = 0;
+  const lowerText = text.toLowerCase();
+  
+  while (true) {
+    const foundIdx = lowerText.indexOf(prefix.toLowerCase(), index);
+    if (foundIdx === -1) break;
+
+    // prefix 매칭 이후 첫 번째 '('를 찾음 (그 사이에는 공백이나 '='만 허용)
+    let startIdx = foundIdx + prefix.length;
+    while (startIdx < text.length && /\s|=/.test(text[startIdx])) {
+      startIdx++;
+    }
+
+    if (startIdx < text.length && text[startIdx] === "(") {
+      let depth = 1;
+      let i = startIdx + 1;
+      let inQuote = false;
+      let quoteChar = "";
+
+      while (i < text.length && depth > 0) {
+        const char = text[i];
+        if (inQuote) {
+          if (char === quoteChar && text[i - 1] !== "~") {
+            inQuote = false;
+          }
+        } else {
+          if (char === '"' || char === "'") {
+            inQuote = true;
+            quoteChar = char;
+          } else if (char === "(") {
+            depth++;
+          } else if (char === ")") {
+            depth--;
+          }
+        }
+        i++;
+      }
+
+      if (depth === 0) {
+        blocks.push(text.substring(startIdx + 1, i - 1));
+        index = i;
+      } else {
+        index = startIdx + 1;
+      }
+    } else {
+      index = foundIdx + prefix.length;
+    }
+  }
+  return blocks;
+};
+
+
+/**
  * 파워빌더 소스 원문을 분석하여 사양서 객체로 반환하는 메인 엔진 함수
  * @param originalText 파워빌더 파일 원문 텍스트
  * @param fileName 파워빌더 파일 이름 (확장자 분석에 사용)
@@ -122,10 +180,8 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
     }
 
     if (tableContent) {
-      const colRegex = /column\s*=\s*\(((?:[^()]+|\([^()]*\))*)\)/gi;
-      let colMatch;
-      while ((colMatch = colRegex.exec(tableContent)) !== null) {
-        const colContent = colMatch[1];
+      const columnsBlocks = extractBalancedBlocks(tableContent, "column");
+      columnsBlocks.forEach((colContent) => {
         const props: { [key: string]: string } = {};
         const propRegex = /([\w.]+)\s*=\s*(?:"((?:[^"~]|~[\s\S])*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
         let pMatch;
@@ -139,17 +195,15 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
             dbname: props.dbname || props.name
           });
         }
-      }
+      });
     }
 
     // [Day 11 작업] 디자인 영역 정렬 매핑 파싱
     const columnTabsequences: { [key: string]: string } = {};
     const columnProtects: { [key: string]: string } = {};
 
-    const layoutColRegex = /column\s*\(((?:[^()]+|\([^()]*\))*)\)/gi;
-    let layoutColMatch;
-    while ((layoutColMatch = layoutColRegex.exec(text)) !== null) {
-      const colContent = layoutColMatch[1];
+    const layoutColBlocks = extractBalancedBlocks(text, "column");
+    layoutColBlocks.forEach((colContent) => {
       const props: { [key: string]: string } = {};
       const propRegex = /([\w.]+)\s*=\s*(?:"((?:[^"~]|~[\s\S])*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
       let pMatch;
@@ -162,13 +216,11 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
         if (props.tabsequence) columnTabsequences[name] = props.tabsequence.replace(/['"]/g, "");
         if (props.protect) columnProtects[name] = props.protect.replace(/['"]/g, "");
       }
-    }
+    });
 
     // 헤더 한글 라벨 매핑 파싱
-    const textControlRegex = /text\s*\(((?:[^()]+|\([^()]*\))*)\)/gi;
-    let textMatch;
-    while ((textMatch = textControlRegex.exec(text)) !== null) {
-      const txtContent = textMatch[1];
+    const textControlBlocks = extractBalancedBlocks(text, "text");
+    textControlBlocks.forEach((txtContent) => {
       const props: { [key: string]: string } = {};
       const propRegex = /([\w.]+)\s*=\s*(?:"((?:[^"~]|~[\s\S])*)"|'([^']*)'|((?:[^()\s]|\([^()]*\))+))/g;
       let pMatch;
@@ -182,7 +234,7 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
           columnLabels[colKey] = props.text.replace(/~"/g, '"').replace(/['"]/g, "");
         }
       }
-    }
+    });
 
     result.columns = result.columns.map(col => ({
       ...col,
@@ -223,10 +275,8 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
 
   // 6. [Day 13 작업] Computed Field 연산 필드 파싱 (Try-Catch 격리)
   try {
-    const computeRegex = /compute\s*\(((?:[^()]+|\([^()]*\))*)\)/gi;
-    let computeMatch;
-    while ((computeMatch = computeRegex.exec(text)) !== null) {
-      const compContent = computeMatch[1];
+    const computeBlocks = extractBalancedBlocks(text, "compute");
+    computeBlocks.forEach((compContent) => {
       const props = getComputeProperties(compContent);
       if (props.name) {
         const name = props.name.replace(/['"]/g, "");
@@ -238,7 +288,7 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
           label: props.text ? props.text.replace(/~"/g, '"').replace(/['"]/g, "") : name
         });
       }
-    }
+    });
   } catch (err: any) {
     result.parseError = (result.parseError ? result.parseError + "\n" : "") + `[연산 필드 Compute 예외] ${err.message}`;
   }
