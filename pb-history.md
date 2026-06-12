@@ -86,3 +86,7 @@
 ### [Day 21] 2026-06-11: 단일 page.tsx 대규모 UI 컴포넌트 모듈화 분할 완료 ◀ 진행 중
 - **주요 작업:** 거대했던 메인 대시보드를 5대 독립 컴포넌트(SourceEditor, ParsingSummary, SqlEditor, GridPreview, FormPreview)로 완벽 격리 해체 후 부모 page.tsx에서 Props 단방향 조립 구조 구축
 - **학습 내용:** 복잡한 Next.js 상태 제어 흐름의 컴포넌트 쪼개기(Component화) 기법 습득, 파일별 책임 분리를 통한 가독성 개선 및 상용 ERP 수준의 유지보수 확장성 마스터
+
+### [Day 22] 2026-06-12: Grid Preview 내 셀 포커스 자동 선택 및 키보드 상하 탐색 구현 ◀ 진행 중
+- **주요 작업:** 그리드 입력 세포(Cell) 진입 시 e.target.select() 기반 텍스트 자동 블록 지정 주입, onKeyDown 이벤트 바인딩을 통한 HTML5 input 간 상하 방향키 포커스 네비게이션 제어 추가
+- **학습 내용:** 소스코드 내 주석에 작업 일자(Day 22) 기록 관리 지속, 레거시 ERP의 키보드 중심 고속 데이터 입력 감각을 웹 브라우저 DOM Query 포커스 제어 기술로 변환하는 메커니즘 이해
