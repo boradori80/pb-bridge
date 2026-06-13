@@ -108,19 +108,113 @@ export default function GridPreview({
                     // 사용자가 ArrowUp/ArrowDown 키를 누르면, `document.querySelector`를 사용하여 
                     // 인접한 행(rIdx - 1 또는 rIdx + 1)의 동일한 컬럼 명을 가진 input 요소를 동적으로 탐색하고,
                     // 해당 DOM 요소에 `.focus()` API를 호출함으로써 C/S 환경의 심리스한 키보드 입력 생산성을 완벽히 복원합니다.
+                    // [Day 23 작업] 좌우 방향키 및 엔터 키 네비게이션 제어 기능
+                    // [설명] 파워빌더(PowerBuilder)의 데이터윈도우(DataWindow)는 과거 클라이언트/서버(C/S) 환경에서
+                    // 고도의 데이터 입력을 연속적이고 신속하게 처리하기 위해 행 기반 연속 입력(Row-by-Row Entry) 환경을 제공했습니다.
+                    // 사용자가 키보드 방향키(상하좌우)나 엔터(Enter) 키만으로 마우스 없이 테이블 전체를 빠른 속도로 종횡무진 탐색하며
+                    // 편집할 수 있는 이 강력한 UI 사용성은 오늘날의 현대적인 웹 환경에서도 매우 중요합니다.
+                    // 
+                    // 웹 브라우저의 기본 인풋 요소는 단일 텍스트 입력 내에서 커서 좌우 이동만 지원하므로,
+                    // React 컴포넌트 내부에서 키보드 이벤트를 가로채고 DOM 구조(`data-row` 및 `data-col`)를 정밀하게 탐색하는 메커니즘을 결합했습니다.
+                    // 특히, 데이터윈도우의 'tabsequence = 0' 또는 'protect = 1' 사양에 해당하는 수정 불가능(readOnly) 셀이 있는 경우
+                    // 이를 자동으로 인식하고 건너뜀으로써, 실무 사용자의 연속 입력 흐름이 단절되지 않고 
+                    // 오직 입력 가능한 셀로만 포커스가 부드럽게 흐르도록 설계했습니다.
                     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+                      const columnsCount = parsedData.columns ? parsedData.columns.length : 0;
+                      const rowsCount = gridData.length;
+
                       if (e.key === "ArrowDown") {
                         e.preventDefault();
-                        const nextInput = document.querySelector(
-                          `input[data-row="${rIdx + 1}"][data-col="${col.name}"]`
-                        ) as HTMLInputElement | null;
-                        if (nextInput) nextInput.focus();
+                        let nextRow = rIdx + 1;
+                        while (nextRow < rowsCount) {
+                          const target = document.querySelector(
+                            `input[data-row="${nextRow}"][data-col="${col.name}"]`
+                          ) as HTMLInputElement | null;
+                          if (target && !target.readOnly && target.tabIndex !== -1) {
+                            target.focus();
+                            break;
+                          }
+                          nextRow++;
+                        }
                       } else if (e.key === "ArrowUp") {
                         e.preventDefault();
-                        const prevInput = document.querySelector(
-                          `input[data-row="${rIdx - 1}"][data-col="${col.name}"]`
-                        ) as HTMLInputElement | null;
-                        if (prevInput) prevInput.focus();
+                        let prevRow = rIdx - 1;
+                        while (prevRow >= 0) {
+                          const target = document.querySelector(
+                            `input[data-row="${prevRow}"][data-col="${col.name}"]`
+                          ) as HTMLInputElement | null;
+                          if (target && !target.readOnly && target.tabIndex !== -1) {
+                            target.focus();
+                            break;
+                          }
+                          prevRow--;
+                        }
+                      } else if (e.key === "ArrowRight") {
+                        e.preventDefault();
+                        let nextColIdx = cIdx + 1;
+                        while (nextColIdx < columnsCount) {
+                          const nextCol = parsedData.columns[nextColIdx];
+                          const target = document.querySelector(
+                            `input[data-row="${rIdx}"][data-col="${nextCol.name}"]`
+                          ) as HTMLInputElement | null;
+                          if (target && !target.readOnly && target.tabIndex !== -1) {
+                            target.focus();
+                            break;
+                          }
+                          nextColIdx++;
+                        }
+                      } else if (e.key === "ArrowLeft") {
+                        e.preventDefault();
+                        let prevColIdx = cIdx - 1;
+                        while (prevColIdx >= 0) {
+                          const prevCol = parsedData.columns[prevColIdx];
+                          const target = document.querySelector(
+                            `input[data-row="${rIdx}"][data-col="${prevCol.name}"]`
+                          ) as HTMLInputElement | null;
+                          if (target && !target.readOnly && target.tabIndex !== -1) {
+                            target.focus();
+                            break;
+                          }
+                          prevColIdx--;
+                        }
+                      } else if (e.key === "Enter") {
+                        e.preventDefault();
+                        let targetFound = false;
+
+                        // 1단계: 아래 행들 중에서 동일 컬럼(col.name)의 입력 가능한 셀 탐색
+                        let nextRow = rIdx + 1;
+                        while (nextRow < rowsCount) {
+                          const target = document.querySelector(
+                            `input[data-row="${nextRow}"][data-col="${col.name}"]`
+                          ) as HTMLInputElement | null;
+                          if (target && !target.readOnly && target.tabIndex !== -1) {
+                            target.focus();
+                            targetFound = true;
+                            break;
+                          }
+                          nextRow++;
+                        }
+
+                        // 2단계: 아래 행에 동일 컬럼의 입력 가능 셀이 없다면, 현재 위치 이후(다음 열들 및 다음 행들) 순차 탐색
+                        if (!targetFound) {
+                          let startRow = rIdx;
+                          let startCol = cIdx + 1;
+                          for (let r = startRow; r < rowsCount; r++) {
+                            const startC = (r === startRow) ? startCol : 0;
+                            for (let c = startC; c < columnsCount; c++) {
+                              const targetCol = parsedData.columns[c];
+                              const target = document.querySelector(
+                                `input[data-row="${r}"][data-col="${targetCol.name}"]`
+                              ) as HTMLInputElement | null;
+                              if (target && !target.readOnly && target.tabIndex !== -1) {
+                                target.focus();
+                                targetFound = true;
+                                break;
+                              }
+                            }
+                            if (targetFound) break;
+                          }
+                        }
                       }
                     };
 
