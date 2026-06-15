@@ -39,8 +39,38 @@ export default function GridPreview({
   // 사용자가 입력한 현재 상태(gridData)와 행 단위로 실시간 비교(State Comparison)하여 변경 여부를 감지합니다.
   // 이를 통해 복잡한 API 호출 없이 리액티브한 화면 렌더링과 조건부 스타일링을 동시 실현하여 
   // 사용자에게 실시간으로 어떤 데이터가 변경되었는지 직관적인 피드백을 제공합니다.
+  // [Day 25 작업] 최초 컴포넌트 마운트 시점의 3개 행 데모 데이터 스냅샷 백업용 Ref
+  const snapshotRef = React.useRef<Array<{ [key: string]: string }>>([]);
   const initialGridDataRef = React.useRef<Array<{ [key: string]: string }>>([]);
   const prevParsedDataRef = React.useRef<any>(null);
+
+  /*
+   * [Day 25 작업] 파워빌더와 현대 웹 상태 관리 비교 (교육용 주석)
+   *
+   * 1. 파워빌더 데이터윈도우의 롤백 및 초기화 메커니즘:
+   *    과거 클라이언트/서버(C/S) 아키텍처에서 파워빌더의 DataWindow는 데이터베이스에서 조회한 
+   *    최초의 데이터 상태를 내부 버퍼(Primary Buffer, Filter Buffer, Delete Buffer)에 보관하며 관리했습니다.
+   *    사용자가 데이터를 수정하면 각 행의 상태 값(ItemStatus)이 DataModified!나 NewModified! 등으로 변하고,
+   *    개발자는 dw_1.Retrieve()로 재조회하여 전체 데이터를 초기화하거나, dw_1.DiscardInitialRows() 또는
+   *    트랜잭션 롤백(ROLLBACK) 처리를 통해 변경 중이던 임시 데이터를 버리고 안전하게 원본 상태로 돌려놓았습니다.
+   *
+   * 2. 현대 웹 프런트엔드의 불변성 상태 관리(Immutable State Mutation) 및 스냅샷 복원:
+   *    React와 같은 현대 웹 프런트엔드 프레임워크에서는 직접 버퍼를 조작하지 않고, 
+   *    데이터를 불변(Immutable) 상태로 관리합니다. 데이터 변경 시 기존 객체를 직접 수정하지 않고 
+   *    완전히 새로운 객체 스냅샷을 생성하여 교체하는 방식을 사용합니다.
+   *    본 컴포넌트에서는 최초 렌더링 시점의 원본 데이터를 `snapshotRef`라는 복제 레퍼런스에 안전하게 저장(Snapshot Capture)해 둡니다.
+   *    - 전체 초기화(Reset) 시: 이 최초 스냅샷 데이터를 딥 카피(Deep Copy)하여 `setGridData` 상태로 통째로 교체합니다.
+   *    - 개별 행 원복(Undo) 시: 변경된 특정 행(Index)의 데이터만 최초 스냅샷 버퍼에서 꺼내어 불변성을 지키며 
+   *      해당 행만 새로운 객체로 대체하여 상태를 업데이트합니다.
+   *    
+   * 이러한 현대적인 스냅샷 복원 기술은 파워빌더의 메모리 내 버퍼 데이터 롤백 처리와 구조적, 개념적으로 완전히 동일한 철학을 따릅니다.
+   */
+  React.useEffect(() => {
+    // 컴포넌트가 처음 로드될 때 gridData의 최초 상태를 딥 카피하여 저장합니다.
+    if (snapshotRef.current.length === 0 && gridData.length > 0) {
+      snapshotRef.current = JSON.parse(JSON.stringify(gridData));
+    }
+  }, [gridData]);
 
   React.useEffect(() => {
     // parsedData가 변경되었거나, 상위에서 gridData의 로드/리셋으로 길이가 달라진 경우 초기 캡처를 수행합니다.
@@ -53,6 +83,31 @@ export default function GridPreview({
       prevParsedDataRef.current = parsedData;
     }
   }, [parsedData, gridData]);
+
+  // [Day 25 작업] 전체 초기화(Reset) 핸들러
+  const handleResetAll = () => {
+    if (snapshotRef.current.length > 0) {
+      const resetSnapshot = JSON.parse(JSON.stringify(snapshotRef.current));
+      setGridData(resetSnapshot);
+      // 비교용 reference 데이터 또한 초기 원본 상태로 동기화하여 변경 감지 카운터를 리셋합니다.
+      initialGridDataRef.current = JSON.parse(JSON.stringify(snapshotRef.current));
+    }
+  };
+
+  // [Day 25 작업] 개별 행 원복(Undo) 핸들러
+  const handleUndoRow = (rIdx: number) => {
+    const originalRow = snapshotRef.current[rIdx];
+    if (!originalRow) return;
+    setGridData((prev) => {
+      const next = [...prev];
+      next[rIdx] = JSON.parse(JSON.stringify(originalRow));
+      return next;
+    });
+    // 비교용 reference의 해당 행 데이터 또한 원본 상태로 복구해 줍니다.
+    if (initialGridDataRef.current[rIdx]) {
+      initialGridDataRef.current[rIdx] = JSON.parse(JSON.stringify(originalRow));
+    }
+  };
 
   // [Day 24 작업] 단 하나의 컬럼이라도 값의 변동이 생겼는지 감지하는 판별 로직 (isRowModified)
   const isRowModified = (currentRow: { [key: string]: string }, rIdx: number): boolean => {
@@ -89,6 +144,19 @@ export default function GridPreview({
             <span className={`w-1.5 h-1.5 rounded-full ${modifiedRowsCount > 0 ? "bg-emerald-400" : "bg-slate-600"}`}></span>
             수정 중인 행: {modifiedRowsCount}건
           </span>
+          {/* // [Day 25 작업] 전체 수정 데이터 일괄 초기화 버튼 */}
+          <button
+            onClick={handleResetAll}
+            disabled={modifiedRowsCount === 0}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold border transition-all ${
+              modifiedRowsCount > 0
+                ? "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white cursor-pointer"
+                : "bg-slate-950 border-slate-900 text-slate-700 cursor-not-allowed"
+            }`}
+            title="모든 변경 사항을 최초 데모 데이터 상태로 초기화합니다."
+          >
+            전체 초기화 ↺
+          </button>
         </div>
       </div>
       <div className="overflow-x-auto border border-slate-900 rounded-xl max-h-48 scrollbar-thin">
@@ -117,6 +185,10 @@ export default function GridPreview({
                   🧮 {comp.label || comp.name}
                 </th>
               ))}
+              {/* // [Day 25 작업] 제어 열 헤더 추가 */}
+              <th className="p-3 text-center w-20 text-slate-400 font-bold border-l border-slate-900/40">
+                제어
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-900 text-slate-300">
@@ -415,6 +487,18 @@ export default function GridPreview({
                       </td>
                     );
                   })}
+                  {/* // [Day 25 작업] 행 단위 개별 Undo 버튼 분기 구역 */}
+                  <td className="p-1 border-l border-slate-900/40 text-center w-20">
+                    {isModified && (
+                      <button
+                        onClick={() => handleUndoRow(rIdx)}
+                        className="px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 hover:text-amber-400 border border-amber-500/20 rounded text-[10px] font-bold transition-all opacity-70 animate-pulse cursor-pointer"
+                        title="이 행의 수정을 취소하고 원래 상태로 되돌립니다."
+                      >
+                        원복
+                      </button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
