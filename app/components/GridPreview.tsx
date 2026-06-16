@@ -218,8 +218,34 @@ export default function GridPreview({
                     {rIdx + 1}
                   </td>
                   {(parsedData.columns || []).map((col, cIdx) => {
-                    const isCellReadOnly =
-                      col.tabsequence === "0" || col.protect === "1";
+                    // [Day 26 작업] Protect 속성 내 If 조건부 표현식 실시간 셀 잠금 연동
+                    // 
+                    // 파워빌더와 현대 웹 React의 런타임 수식 평가 메커니즘 비교 (교육용 설명):
+                    // 1. 파워빌더 데이터윈도우(DataWindow)의 런타임 Row 단위 평가:
+                    //    과거 4GL 개발 환경인 파워빌더에서는 Protect 속성에 `protect="if(status = 'closed', 1, 0)"` 과 같은
+                    //    동적 표현식(Expression)을 정의할 수 있습니다. 런타임 엔진(DataWindow Engine)은 화면을 그리거나
+                    //    특정 행의 상태가 변경될 때마다 각 셀 단위로 이 표현식을 재평가(Re-evaluation)하여 
+                    //    해당 셀의 편집 권한(Protect)을 즉시 잠그거나 푸는 고도의 화면 제어를 내부적으로 수행했습니다.
+                    // 
+                    // 2. 현대 웹 표준 React의 동적 조건부 렌더링(Dynamic Conditional Rendering):
+                    //    React는 '상태(State)가 변경되면 컴포넌트가 자동으로 다시 그려진다(Re-rendering)'는 선언적 패러다임을 따릅니다.
+                    //    따라서, 사용자가 데이터를 수정하여 행(`row`)의 값이 변할 때마다 컴포넌트 내부에서 `evaluateDWExpression`
+                    //    함수를 통해 `col.protect` 수식을 실시간으로 다시 평가(Evaluation)합니다.
+                    //    이를 통해 반환값에 따라 `isCellReadOnly` 상태를 결정하고, React의 가상 DOM은 이를 인지하여 
+                    //    브라우저 표준인 `readOnly={true}`, `tabIndex={-1}` 및 비활성화 스타일 클래스(`bg-slate-950/60 text-slate-500`)를 즉시 반영(Dynamic Class Binding)합니다.
+                    //    이로써 레거시 데이터윈도우의 Row 단위 실시간 셀 보호 로직을 현대적이고 선언적인 웹 렌더링 방식으로 완벽히 일치시킬 수 있습니다.
+                    let isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
+                    
+                    if (col.protect && col.protect.toLowerCase().includes("if")) {
+                      const evaluated = evaluateDWExpression(
+                        col.protect,
+                        { ...row, ...argValues },
+                        parsedData.columns
+                      );
+                      const isProtected = evaluated === 1 || evaluated === "1" || String(evaluated).toLowerCase() === "true";
+                      isCellReadOnly = col.tabsequence === "0" || isProtected;
+                    }
+
                     const cellAlignClass = getAlignClass(col.alignment);
                     const colType = (col.type || "").toLowerCase();
 

@@ -214,7 +214,11 @@ export const parsePBFile = (originalText: string, fileName: string): ParsedPB =>
         const name = props.name.replace(/['"]/g, "");
         if (props.alignment) columnAlignments[name] = props.alignment.replace(/['"]/g, "");
         if (props.tabsequence) columnTabsequences[name] = props.tabsequence.replace(/['"]/g, "");
-        if (props.protect) columnProtects[name] = props.protect.replace(/['"]/g, "");
+        // [Day 26 작업] Protect 속성 내 If 조건부 표현식 보존을 위한 정밀 파싱
+        // 초보자를 위한 설명: 기존에는 protect 속성을 파싱할 때 따옴표(' 또는 ")를 일괄 제거하여, 
+        // protect="if(status = 'closed', 1, 0)" 처럼 내부 조건식 안에 들어있는 문자열 상수 따옴표까지 유실되었습니다.
+        // 이를 방지하기 위해 전체 따옴표 대신 문자열의 가장 바깥쪽 시작과 끝 부분의 따옴표만 매칭하여 제거하도록 보완합니다.
+        if (props.protect) columnProtects[name] = props.protect.replace(/^['"]|['"]$/g, "");
       }
     });
 
