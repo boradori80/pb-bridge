@@ -106,3 +106,7 @@
 ### [Day 26] 2026-06-16: Protect 조건부 표현식(Expression) 파싱 및 런타임 행(Row) 단위 셀 잠금 연동 ◀ 진행 중
 - **주요 작업:** .srd 소스 내 protect="If(...)" 문자열 사양 정밀 포착 정규식 보완, 그리드 프리뷰 렌더링 시 evaluateDWExpression 런타임 연동을 통한 행 단위 가변형 readOnly 및 tabIndex={-1} 제어 회로 고도화
 - **학습 내용:** 소스코드 내 주석에 작업 일자(Day 26) 기록 관리 지속, 파워빌더의 수식 기반 동적 속성 변경(Modify/Expression) 메커니즘을 React의 실시간 상태 평가 및 dynamic 속성 바인딩 기술로 전환하는 기법 체득
+
+### [Day 27] 2026-06-17: Master-Detail 행 선택(Row Selection) 상태 바인딩 및 등록 폼 실시간 동기화 구현 ◀ 진행 중
+- **주요 작업:** 부모 page.tsx 내 selectedRowIndex 상호 추적 상태 설계, Grid 프리뷰 행 클릭 시 RowFocusChanged 시각적 하이라이트(bg-indigo-600/10) 연동, 자식 FormPreview 컴포넌트로의 데이터 상태 끌어올리기(State Lifting) 양방향 동기화 파이프라인 구축
+- **학습 내용:** 소스코드 내 주석에 작업 일자(Day 27) 기록 관리 지속, 레거시 데이터윈도우의 행 버퍼 포인터 이동 메커니즘을 현대 웹 프런트엔드의 반응형 상태 공유 아키텍처로 변환하는 마스터-디테일 컴포넌트 통신 기법 체득

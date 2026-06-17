@@ -67,8 +67,13 @@ export default function PBBridgeDashboard() {
   const [activeFileType, setActiveFileType] = useState<string>("DataWindow (.srd)");
 
   const [parsedData, setParsedData] = useState<ParsedPB>(parsePBFile(INITIAL_HISTORY[0].sourceCode, "dw_sales_summary.srd"));
-  const [formData, setFormData] = useState<{ [key: string]: string }>({});
+  // [Day 27 작업] 행 선택 상태 정의 구역
+  // 파워빌더 데이터윈도우의 RowFocusChanged 이벤트나 GetRow()처럼 현재 포커싱된 행을 추적하기 위해 selectedRowIndex 상태를 도입합니다.
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number>(0);
   const [gridData, setGridData] = useState<Array<{ [key: string]: string }>>([]);
+
+  // formData는 개별 상태가 아닌 gridData[selectedRowIndex]를 동적으로 실시간 참조하여 단방향 데이터 흐름을 형성합니다.
+  const formData = gridData[selectedRowIndex] || {};
 
   // [Day 16 작업] Retrieval Arguments 실시간 바인딩 관련 React 상태 관리
   const [argValues, setArgValues] = useState<{ [key: string]: string }>({});
@@ -95,21 +100,26 @@ export default function PBBridgeDashboard() {
     }
   }, [parsedData.arguments, activeFileName]);
 
-  useEffect(() => {
-    if (parsedData?.columns?.length > 0) {
-      const initialFormState: { [key: string]: string } = {};
-      parsedData.columns.forEach((col) => {
-        initialFormState[col.name] = "";
-      });
-      setFormData(initialFormState);
-    } else {
-      setFormData({});
-    }
-  }, [parsedData.columns]);
-
+  // [Day 27 작업] 폼 프리뷰 Props 동기화 구역
+  // 폼 내부 입력창의 변경 사양이 gridData 배열의 현재 선택된 행(selectedRowIndex) 레코드에 실시간으로 역반영되도록 양방향 데이터 바인딩을 고도화합니다.
+  // 이 패턴은 파워빌더에서 Modify()나 SetItem()을 통해 버퍼의 특정 행 컬럼 값을 변경하고 그리드가 이를 자동 갱신하도록 구성하는 메커니즘을 React의 '단방향 데이터 흐름 + 역전달 콜백' 아키텍처로 조화롭게 재해석한 것입니다.
   const handleFormInputChange = (colName: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [colName]: value }));
+    setGridData((prev) => {
+      const next = [...prev];
+      if (next[selectedRowIndex]) {
+        next[selectedRowIndex] = {
+          ...next[selectedRowIndex],
+          [colName]: value,
+        };
+      }
+      return next;
+    });
   };
+
+  useEffect(() => {
+    // 새로운 데이터윈도우가 파싱되어 컬럼이 변경되면 선택된 행의 인덱스를 첫 번째 행(0)으로 초기화합니다.
+    setSelectedRowIndex(0);
+  }, [parsedData.columns]);
 
   const [columnSearch, setColumnSearch] = useState<string>("");
   const [isSqlFormatted, setIsSqlFormatted] = useState(false);
@@ -294,6 +304,8 @@ export default function PBBridgeDashboard() {
           gridData={gridData}
           setGridData={setGridData}
           argValues={argValues}
+          selectedRowIndex={selectedRowIndex}
+          onSelectRow={setSelectedRowIndex}
         />
 
         {/* 웹 등록 폼 프리뷰 */}

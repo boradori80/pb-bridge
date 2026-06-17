@@ -10,6 +10,10 @@ interface GridPreviewProps {
   gridData: Array<{ [key: string]: string }>;
   setGridData: React.Dispatch<React.SetStateAction<Array<{ [key: string]: string }>>>;
   argValues: { [key: string]: string };
+  // [Day 27 작업] 행 선택 상태 정의 구역
+  // 파워빌더의 GetRow() 버퍼 포인터와 유사하게, 현재 뷰어에서 선택된 행을 관리하기 위해 Props를 통해 상위 상태 및 변경 제어 함수를 주입받습니다.
+  selectedRowIndex: number;
+  onSelectRow: (rIdx: number) => void;
 }
 
 const ALIGN_MAP: { [key: string]: string } = {
@@ -28,6 +32,8 @@ export default function GridPreview({
   gridData,
   setGridData,
   argValues,
+  selectedRowIndex,
+  onSelectRow,
 }: GridPreviewProps) {
   // [Day 24 작업] 초기 gridData 백업 및 비교를 위한 레퍼런스
   // [설명] 파워빌더의 dw_1.GetItemStatus() 메커니즘을 현대적 웹 React 상태 비교로 구현한 판별식
@@ -195,9 +201,16 @@ export default function GridPreview({
             {gridData.map((row, rIdx) => {
               // [Day 24 작업] 행의 수정 여부를 실시간으로 감지하여 스타일을 분기합니다.
               const isModified = isRowModified(row, rIdx);
-              const rowBgClass = isModified
+
+              // [Day 27 작업] 행 선택 상태 및 조건부 스타일링 바인딩 구역
+              // 현재 선택된 행(selectedRowIndex === rIdx)일 경우, 시각적인 구분을 위해 영롱한 인디고 다크 배경색(bg-indigo-600/10 border-y border-indigo-500/30)을 입힙니다.
+              // 만약 선택되지 않았고 수정된 상태라면 기존의 에메랄드 배경을, 수정되지 않은 기본 상태라면 슬레이트 호버 배경을 보여줍니다.
+              const isSelected = selectedRowIndex === rIdx;
+              const rowBgClass = isSelected
+                ? "bg-indigo-600/10 border-y border-indigo-500/30 font-bold"
+                : isModified
                 ? "bg-emerald-950/10 hover:bg-emerald-950/20"
-                : "hover:bg-slate-800";
+                : "hover:bg-slate-800/40";
 
               return (
                 <tr
@@ -207,7 +220,11 @@ export default function GridPreview({
                       ? `${parsedData.bands.detail / 2}px`
                       : "40px",
                   }}
-                  className={`transition-all font-mono ${rowBgClass}`}
+                  // [Day 27 작업] <tr> 클릭 이벤트 바인딩 구역
+                  // 사용자가 특정 행을 클릭하면 상위 page.tsx의 selectedRowIndex 상태가 변경되며, 이에 연동되어 FormPreview에 실시간으로 데이터가 연동됩니다.
+                  // 이는 파워빌더 데이터윈도우의 RowFocusChanged 이벤트가 트리거되면서 GetRow() 함수를 통해 포커스된 버퍼 레코드를 참조하는 작동 방식을 리액트식 선언형 상태와 단방향 바인딩으로 조화롭게 재구현한 형태입니다.
+                  onClick={() => onSelectRow(rIdx)}
+                  className={`transition-all font-mono cursor-pointer ${rowBgClass}`}
                 >
                   {/* [Day 24 작업] 수정된 행일 경우 No. 셀에 에메랄드 테두리 및 텍스트 하이라이트 동적 부여 */}
                   <td className={`p-3 text-center transition-all ${

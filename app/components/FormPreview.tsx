@@ -11,6 +11,23 @@ interface FormPreviewProps {
   onFormInputChange: (colName: string, value: string) => void;
 }
 
+// [Day 27 작업] 폼 프리뷰 Props 동기화 구역
+// 
+// 파워빌더 데이터윈도우의 RowFocusChanged / GetRow() 버퍼와 React 상태 관리 융합에 대한 설명:
+// 1. 파워빌더(레거시) 방식:
+//    전통적인 클라이언트/서버(C/S) 파워빌더 개발에서는 그리드(dw_1)에서 행이 바뀔 때 'RowFocusChanged' 이벤트가 자동으로 발생합니다.
+//    개발자는 'dw_1.GetRow()'나 'dw_1.GetItemString(row, col)' 함수를 이용해 포커스된 행의 버퍼 데이터를 수동으로 조회한 뒤,
+//    별도로 존재하는 프리뷰 폼이나 상세 디테일 윈도우의 컨트롤에 SetText()나 SetItem() 등으로 수동 동기화(Sync)해 주는 절차가 필요했습니다.
+//    또한 상세 폼에서 변경이 일어나면 이를 다시 그리드 버퍼에 동기화해 주는 로직을 개발자가 매번 수작업으로 바인딩해야만 했습니다.
+// 
+// 2. 현대 웹 표준 React 방식:
+//    React는 상태가 단방향으로 흐르며 상태 변화가 렌더링으로 이어지는 선언적 UI 구조를 따릅니다.
+//    부모 컴포넌트(page.tsx)에서 'selectedRowIndex' 상태를 관리하고, 'gridData[selectedRowIndex]'의 데이터 스냅샷을 
+//    'formData' Props로 하위 컴포넌트인 FormPreview에 전달(단방향 흐름)함으로써, 사용자가 그리드 행을 클릭하는 순간
+//    이 정보가 폭포수처럼 하단 폼으로 흘러들어가 실시간으로 반영됩니다.
+//    반대로 상세 폼 내의 인풋에서 변경(onChange)이 일어나면, 부모로부터 전달받은 역방향 콜백 함수 'onFormInputChange'를 통해
+//    부모가 소유한 'gridData' 배열 버퍼의 해당 인덱스 레코드를 정밀 갱신(양방향 바인딩 시뮬레이션)합니다.
+//    이로써 데이터의 단일 진실 공급원(Single Source of Truth)을 유지하면서도 파워빌더의 양방향 연동 사양을 아름답고 단순하게 완비할 수 있습니다.
 export default function FormPreview({
   parsedData,
   formData,
