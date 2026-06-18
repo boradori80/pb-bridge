@@ -309,6 +309,24 @@ export default function GridPreview({
                         const columnsCount = parsedData.columns ? parsedData.columns.length : 0;
                         const rowsCount = gridData.length;
 
+                        // [Day 28 작업] 파워빌더 고속 입력 및 React 상태 동기화 제어 구역
+                        /*
+                         * [설명] 파워빌더 데이터윈도우의 RowFocusChanging / RowFocusChanged 트랜잭션 흐름과 현대 웹의 비교
+                         *
+                         * 1. 파워빌더(레거시 C/S) 환경:
+                         *    사용자가 방향키를 눌러 다른 로우로 포커스를 이동하면, 데이터윈도우 엔진 내부에서 'RowFocusChanging' 이벤트가 발생하여
+                         *    이동을 허용할 것인지(트랜잭션 무결성 검증, 입력 데이터 유효성 검사 등) 판단한 후, 이동이 완료되면 최종적으로
+                         *    'RowFocusChanged' 이벤트가 트리거됩니다. 이 이벤트 핸들러 내부에서 GetRow()를 통해 바뀐 행 번호를 얻어
+                         *    하단의 상세 폼에 값을 수동으로 재배치(SetItem/Retrieve 등)해야만 했습니다.
+                         *
+                         * 2. 현대 웹 표준 브라우저 및 React(상태 동기화) 환경:
+                         *    웹 브라우저에서는 키보드 이벤트가 상위 DOM으로 전파(Event Bubbling)되므로, `e.preventDefault()`를 사용해 브라우저 고유의
+                         *    인풋 포커스 제어를 일시 차단하고, 수동으로 가상 DOM 및 실제 DOM 노드를 쿼리(`document.querySelector`)하여 유효한 셀을 찾아 포커스를 옮깁니다.
+                         *    이때, Protect 수식에 의해 편집이 불가한(readOnly) 셀은 건너뛰는(skip) 정밀 알고리즘을 수행하며, 최종적으로 포커스가
+                         *    안착하는 타깃 행 인덱스로 부모에게 전달받은 `onSelectRow(newRowIndex)` 콜백을 호출합니다.
+                         *    React의 상태(State)가 변경되면 단방향 데이터 흐름을 타고 하단의 FormPreview가 1:1 실시간 렌더링 동기화(State Synchronization)되어
+                         *    병목 없이 즉시 갱신됩니다.
+                         */
                         if (e.key === "ArrowDown") {
                           e.preventDefault();
                           let nextRow = rIdx + 1;
@@ -318,6 +336,7 @@ export default function GridPreview({
                             ) as HTMLInputElement | null;
                             if (target && !target.readOnly && target.tabIndex !== -1) {
                               target.focus();
+                              onSelectRow(nextRow);
                               break;
                             }
                             nextRow++;
@@ -331,6 +350,7 @@ export default function GridPreview({
                             ) as HTMLInputElement | null;
                             if (target && !target.readOnly && target.tabIndex !== -1) {
                               target.focus();
+                              onSelectRow(prevRow);
                               break;
                             }
                             prevRow--;

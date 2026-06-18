@@ -67,8 +67,10 @@ export default function PBBridgeDashboard() {
   const [activeFileType, setActiveFileType] = useState<string>("DataWindow (.srd)");
 
   const [parsedData, setParsedData] = useState<ParsedPB>(parsePBFile(INITIAL_HISTORY[0].sourceCode, "dw_sales_summary.srd"));
-  // [Day 27 작업] 행 선택 상태 정의 구역
-  // 파워빌더 데이터윈도우의 RowFocusChanged 이벤트나 GetRow()처럼 현재 포커싱된 행을 추적하기 위해 selectedRowIndex 상태를 도입합니다.
+  // [Day 28 작업] 얕은 제어 상태 관리 (State Synchronization)
+  // 파워빌더 데이터윈도우의 GetRow() 포인터 및 RowFocusChanged 이벤트의 현대적 대응으로써
+  // selectedRowIndex 상태는 자식 컴포넌트(GridPreview)의 키보드 방향키 이동에 의해 지연 없이(실시간) 갱신되며,
+  // 갱신된 인덱스는 얕은 평가(gridData[selectedRowIndex])를 통해 FormPreview의 데이터 스트림으로 즉시 흘러갑니다.
   const [selectedRowIndex, setSelectedRowIndex] = useState<number>(0);
   const [gridData, setGridData] = useState<Array<{ [key: string]: string }>>([]);
 
