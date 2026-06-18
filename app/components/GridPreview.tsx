@@ -165,7 +165,23 @@ export default function GridPreview({
           </button>
         </div>
       </div>
-      <div className="overflow-x-auto border border-slate-900 rounded-xl max-h-48 scrollbar-thin">
+      {/* // [Day 28 레이아웃 보완] 고속 입력용 가변 뷰포트 및 스크롤 최적화 구역 */}
+      {/*
+        * [설명] 파워빌더 고정 픽셀 뷰포트 제어 vs 현대 웹 표준 CSS3 유연한 스크롤 컨테이너의 융합
+        *
+        * 1. 레거시 파워빌더 방식:
+        *    전통적인 클라이언트/서버(C/S) 환경에서는 윈도우 창과 데이터윈도우 컨트롤의 크기가 고정 픽셀(Pixel) 단위로
+        *    결정되는 경우가 많았습니다. 헤더(Header Band) 영역에 다량의 텍스트와 검색 컬럼 레이아웃이 추가되어 높이가
+        *    비대해지면, 데이터가 표시되어야 할 디테일(Detail Band) 영역이 아래로 묻혀 스크롤바가 어색하게 작동하거나
+        *    UI가 붕괴되는 현상이 빈번하게 발생했습니다.
+        *
+        * 2. 현대 웹 표준 HTML5/CSS3 방식:
+        *    이러한 문제를 해결하기 위해, 테이블 외곽을 감싸는 컨테이너에 최소 높이 `min-h-[260px]`와 최대 높이 `max-h-[400px]`를
+        *    지정함으로써 헤더의 크기 변화에 상관없이 최소 3개 행 이상의 데이터 뷰 영역을 물리적으로 보장(Safe Zone)합니다.
+        *    여기에 가로 스크롤 `overflow-x-auto`와 세로 스크롤 `overflow-y-auto`를 유연하게 결합하여, 가로로 긴 대량 컬럼
+        *    환경에서도 레이아웃이 화면 밖으로 깨지지 않고 내부에서 자연스럽게 스크롤링되는 반응형 대시보드를 구축합니다.
+        */}
+      <div className="overflow-x-auto overflow-y-auto border border-slate-900 rounded-xl min-h-[260px] max-h-[400px] scrollbar-thin">
         <table className="w-full text-left text-xs border-collapse">
           <thead className="bg-slate-900 text-slate-400 font-bold sticky top-0 border-b border-slate-900">
             <tr
