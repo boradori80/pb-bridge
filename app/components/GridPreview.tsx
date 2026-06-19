@@ -50,6 +50,9 @@ export default function GridPreview({
   const initialGridDataRef = React.useRef<Array<{ [key: string]: string }>>([]);
   const prevParsedDataRef = React.useRef<any>(null);
 
+  // [Day 29 작업] 추출된 JSON 마스터 패킷 저장용 상태
+  const [dumpOutput, setDumpOutput] = React.useState<string | null>(null);
+
   /*
    * [Day 25 작업] 파워빌더와 현대 웹 상태 관리 비교 (교육용 주석)
    *
@@ -115,6 +118,62 @@ export default function GridPreview({
     }
   };
 
+  // [Day 29 작업] 데이터 추출 핸들러 및 파워빌더 dw_1.Update() 메커니즘 연동 주석
+  /*
+   * 파워빌더 데이터윈도우의 dw_1.Update() 트랜잭션과 현대 웹의 State Diffing 비교 (교육용 설명):
+   * 
+   * 1. 파워빌더(레거시 C/S)의 Update() 메커니즘:
+   *    파워빌더 DataWindow는 조회 시점의 데이터를 보관하는 내부 버퍼(Primary!, Filter!, Delete!)를 가집니다.
+   *    사용자가 값을 변경하면 각 행의 상태(ItemStatus)가 변경되고, Update()를 호출할 때
+   *    이 상태 값을 추적하여 최종적으로 INSERT, UPDATE SQL 구문을 동적으로 조합해 DB에 직접 전송합니다.
+   * 
+   * 2. 현대 웹 표준 React의 State Diffing 및 JSON Fetching 기술:
+   *    웹 환경에서는 DB와 실시간 연결되어 있지 않으므로, React 상태(State)의 이전/이후 버전을 비교(State Diffing)하여
+   *    변경된 레코드만 골라내고, 이를 구조화된 JSON 데이터 패킷으로 조립하여 백엔드 API로 전송(Fetching)합니다.
+   *    아래 함수는 현재 그리드의 gridData를 순회하며 최초 snapshot(initialGridDataRef.current)과 비교하여,
+   *    단 하나의 컬럼이라도 수정된 행(Modified Rows)만 정확하게 걸러내어 원래 행 번호(row_no, 1부터 시작)와 함께 
+   *    JSON 문자열로 포맷팅해 dumpOutput 상태에 기록합니다. 
+   *    변경된 행이 0건이면 "변경사항이 존재하지 않습니다."를 안내하는 패킷을 생성해 대입합니다.
+   */
+  const handleSaveAndExtract = () => {
+    const modifiedRows = gridData
+      .map((row, rIdx) => {
+        const originalRow = initialGridDataRef.current[rIdx];
+        if (!originalRow) return null;
+        
+        const isModified = (parsedData.columns || []).some((col) => {
+          const currentVal = row[col.name] ?? "";
+          const originalVal = originalRow[col.name] ?? "";
+          return currentVal !== originalVal;
+        });
+
+        if (isModified) {
+          return {
+            row_no: rIdx + 1,
+            data: row,
+          };
+        }
+        return null;
+      })
+      .filter((item): item is { row_no: number; data: { [key: string]: string } } => item !== null);
+
+    if (modifiedRows.length === 0) {
+      setDumpOutput(
+        JSON.stringify(
+          {
+            message: "변경사항이 존재하지 않습니다.",
+            status: "NO_CHANGES",
+            timestamp: new Date().toISOString(),
+          },
+          null,
+          2
+        )
+      );
+    } else {
+      setDumpOutput(JSON.stringify(modifiedRows, null, 2));
+    }
+  };
+
   // [Day 24 작업] 단 하나의 컬럼이라도 값의 변동이 생겼는지 감지하는 판별 로직 (isRowModified)
   const isRowModified = (currentRow: { [key: string]: string }, rIdx: number): boolean => {
     const originalRow = initialGridDataRef.current[rIdx];
@@ -162,6 +221,14 @@ export default function GridPreview({
             title="모든 변경 사항을 최초 데모 데이터 상태로 초기화합니다."
           >
             전체 초기화 ↺
+          </button>
+          {/* // [Day 29 작업] 저장 및 데이터 추출 버튼 */}
+          <button
+            onClick={handleSaveAndExtract}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold border border-emerald-500/30 bg-emerald-950/80 text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300 transition-all cursor-pointer"
+            title="변경된 데이터셋을 JSON 패킷으로 추출합니다."
+          >
+            저장 및 데이터 추출 💾
           </button>
         </div>
       </div>
@@ -584,6 +651,42 @@ export default function GridPreview({
           </tbody>
         </table>
       </div>
+
+      {/* // [Day 29 작업] TRANSACTION DATA DUMP 로그 터미널 레이어 */}
+      {/* 
+        * 파워빌더 DB 디버그 로그 및 현대 웹 터미널 에뮬레이터 뷰어의 연결점 (교육용 설명):
+        * 
+        * 1. 레거시 파워빌더 방식:
+        *    과거 파워빌더 개발자는 Update() 실행 전후의 SQL 트랜잭션 흐름을 파악하기 위해 SQLPreview 이벤트를 가로채거나,
+        *    DBTrace 로그를 파일로 기록하여 쿼리 오류 및 버퍼 상태를 수동으로 역추적했습니다.
+        * 
+        * 2. 현대 웹 방식:
+        *    현대 웹 브라우저에서는 API 서버로 비동기 호출하기 전, 전송될 JSON 데이터의 상태를 모니터링하기 위해
+        *    로그 레이어를 직접 화면에 빌드하여 디버깅 편의성을 도모합니다.
+        *    여기서는 bg-black(검정 배경), border-emerald-900/50(에메랄드 경계선), text-emerald-400(형광 초록 폰트)
+        *    사양의 터미널 모양 덤프 로그창을 구성하여, 데이터 패킷 전송 직전의 무결성을 디버깅할 수 있게 설계했습니다.
+        */}
+      {dumpOutput && (
+        <div className="mt-4 bg-black border border-emerald-900/50 rounded-xl p-4 font-mono text-xs text-emerald-400 flex flex-col gap-2 relative shadow-2xl transition-all">
+          <div className="flex items-center justify-between border-b border-emerald-900/30 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="font-bold text-emerald-300">
+                [TRANSACTION DATA DUMP] - dw_1.Update() Buffer JSON Output
+              </span>
+            </div>
+            <button
+              onClick={() => setDumpOutput(null)}
+              className="text-emerald-500 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 px-2 py-0.5 rounded border border-emerald-500/20 text-[10px] font-bold cursor-pointer transition-all"
+            >
+              닫기 ✕
+            </button>
+          </div>
+          <pre className="overflow-auto max-h-48 scrollbar-thin whitespace-pre-wrap select-all">
+            {dumpOutput}
+          </pre>
+        </div>
+      )}
     </section>
   );
 }
