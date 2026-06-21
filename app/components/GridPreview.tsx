@@ -52,6 +52,68 @@ export default function GridPreview({
 
   // [Day 29 작업] 추출된 JSON 마스터 패킷 저장용 상태
   const [dumpOutput, setDumpOutput] = React.useState<string | null>(null);
+  // [Day 30 작업] 클립보드 복사 완료 상태 관리용 토스트 플래그
+  const [copied, setCopied] = React.useState<boolean>(false);
+
+  // [Day 30 작업] 클립보드 복사 함수 및 파일 다운로드 가동 스크립트 블록
+  /*
+   * 파워빌더 dw_1.SaveAs(..., JSON!, ...)와 현대 웹 표준 API(Clipboard & Blob) 비교 설명:
+   *
+   * 1. 파워빌더(레거시 C/S)의 SaveAs() 디스크 직접 쓰기 메커니즘:
+   *    과거 C/S 환경인 파워빌더에서는 dw_1.SaveAs("c:\temp\dump.json", JSON!, true) 함수를 실행하면
+   *    로컬 운영체제(OS)의 파일 시스템 드라이브와 메모리 버퍼에 직접 IO 핸들을 열고 텍스트를 물리적으로 파일화하여 
+   *    저장했습니다. 이 방식은 단순하고 직접적이나, 클라이언트 PC 보안 제어가 어려워 악성 파일 오염이나 
+   *    로컬 시스템 권한 탈취 문제 등 보안 샌드박스가 결여된 한계가 있었습니다.
+   * 
+   * 2. 현대 웹 표준 브라우저의 가상 Blob 객체 및 네이티브 클립보드 API (Clipboard & Blob Stream):
+   *    현대적인 웹 브라우저 환경에서는 클라이언트의 기기 보안을 지키기 위해 직접적인 파일 시스템 쓰기 접근을 원천적으로 
+   *    차단(Sandbox Security Model)합니다. 따라서 파워빌더의 SaveAs 처리를 브라우저 기반으로 변환하기 위해 아래의 
+   *    웹 표준 API 구조로 안전하게 대치합니다:
+   *    
+   *    - Clipboard API (navigator.clipboard.writeText):
+   *      디스크 쓰기 없이, 브라우저가 위임받은 운영체제의 클립보드 메모리 버퍼에 JSON 텍스트를 바로 쓰기 함으로써 
+   *      사용자가 간편하게 Ctrl+V를 눌러 다른 프로그램에 붙여넣을 수 있게 하는 고생산성 네이티브 인터페이스입니다.
+   * 
+   *    - 가상 Blob(Binary Large Object) & 임시 Anchor(<a>) 태그:
+   *      디스크에 직접 저장하는 대신 브라우저 메모리에 가상의 가공 안 된 원시 바이너리 스트림 객체(Blob)를 생성한 뒤,
+   *      URL.createObjectURL API를 사용하여 이 객체를 가리키는 고유 가상 주소(Blob URI)를 임시로 발급합니다.
+   *      이후 화면에는 렌더링되지 않는 메모리 상의 가상 `<a>` (Anchor) 엘리먼트를 생성하여 `download` 속성에 
+   *      파일명(`pb_bridge_data_dump.json`)을 할당하고 가상 주소를 연결해 준 뒤, `.click()`을 트리거하여 
+   *      안전한 샌드박스 다운로드 창이 열리도록 구동합니다.
+   * 
+   *    이 현대적 대치 기술은 사용자 클라이언트의 권한 보안을 극대화하면서도 기존 파워빌더 데이터 덤프 요구사항을 
+   *    웹 친화적으로 조화시킨 상용 ERP 수준의 견고한 솔루션입니다.
+   */
+  const handleCopyToClipboard = async () => {
+    if (!dumpOutput) return;
+    try {
+      await navigator.clipboard.writeText(dumpOutput);
+      setCopied(true);
+      setTimeout(() => {
+        setCopied(false);
+      }, 1500);
+    } catch (err) {
+      console.error("클립보드 복사 실패:", err);
+    }
+  };
+
+  const handleDownloadJSON = () => {
+    if (!dumpOutput) return;
+    try {
+      const blob = new Blob([dumpOutput], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "pb_bridge_data_dump.json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("JSON 다운로드 실패:", err);
+    }
+  };
+
 
   /*
    * [Day 25 작업] 파워빌더와 현대 웹 상태 관리 비교 (교육용 주석)
@@ -668,6 +730,13 @@ export default function GridPreview({
         */}
       {dumpOutput && (
         <div className="mt-4 bg-black border border-emerald-900/50 rounded-xl p-4 font-mono text-xs text-emerald-400 flex flex-col gap-2 relative shadow-2xl transition-all">
+          {/* [Day 30 작업] 복사 완료 알림 레이아웃 (다크 네온 토스트 메시지) */}
+          {copied && (
+            <div className="absolute top-12 right-4 bg-emerald-950 text-emerald-300 border border-emerald-400/50 px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.5)] animate-bounce z-10 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+              <span>복사 완료! 📋</span>
+            </div>
+          )}
           <div className="flex items-center justify-between border-b border-emerald-900/30 pb-2">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -675,12 +744,29 @@ export default function GridPreview({
                 [TRANSACTION DATA DUMP] - dw_1.Update() Buffer JSON Output
               </span>
             </div>
-            <button
-              onClick={() => setDumpOutput(null)}
-              className="text-emerald-500 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 px-2 py-0.5 rounded border border-emerald-500/20 text-[10px] font-bold cursor-pointer transition-all"
-            >
-              닫기 ✕
-            </button>
+            {/* [Day 30 작업] 다크 네온 스타일 기능 버튼 배치 */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopyToClipboard}
+                className="text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/50 px-2.5 py-1 rounded border border-emerald-500/30 text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 hover:shadow-[0_0_8px_rgba(16,185,129,0.4)]"
+                title="추출된 JSON 문자열을 클립보드에 원클릭 복사합니다."
+              >
+                클립보드 복사 📋
+              </button>
+              <button
+                onClick={handleDownloadJSON}
+                className="text-cyan-400 hover:text-cyan-300 bg-cyan-950/60 hover:bg-cyan-900/50 px-2.5 py-1 rounded border border-cyan-500/30 text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 hover:shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                title="추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다."
+              >
+                JSON 다운로드 💾
+              </button>
+              <button
+                onClick={() => setDumpOutput(null)}
+                className="text-emerald-500 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 px-2.5 py-1 rounded border border-emerald-500/20 text-[10px] font-bold cursor-pointer transition-all"
+              >
+                닫기 ✕
+              </button>
+            </div>
           </div>
           <pre className="overflow-auto max-h-48 scrollbar-thin whitespace-pre-wrap select-all">
             {dumpOutput}
