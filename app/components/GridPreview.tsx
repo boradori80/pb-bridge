@@ -54,6 +54,13 @@ export default function GridPreview({
   const [searchKeyword, setSearchKeyword] = React.useState<string>("김개발"); // 사용성 향상을 위한 초기 기본값 지정
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
 
+  // [Day 33 작업] 정렬 상태 관리를 위한 React 로컬 상태 추가
+  // key: 정렬 대상 컬럼명, direction: 정렬 방향 (asc: 오름차순, desc: 내림차순, none: 정렬 안 함)
+  const [sortConfig, setSortConfig] = React.useState<{ key: string; direction: "asc" | "desc" | "none" }>({
+    key: "",
+    direction: "none",
+  });
+
   // [Day 24 작업] 초기 gridData 백업 및 비교를 위한 레퍼런스
   const snapshotRef = React.useRef<Array<{ [key: string]: string }>>([]);
   const initialGridDataRef = React.useRef<Array<{ [key: string]: string }>>([]);
@@ -134,8 +141,16 @@ export default function GridPreview({
         return matchDept && matchKeyword;
       });
 
-      const updatedRows = filteredMock.map((mockItem) => generateRowData(mockItem, parsedData.columns || []));
+      // [Day 33 작업] 새로운 데이터를 조회할 때 각 행에 __originalIndex 고유 키를 순차 부여
+      const updatedRows = filteredMock.map((mockItem, idx) => {
+        const row = generateRowData(mockItem, parsedData.columns || []);
+        row.__originalIndex = String(idx);
+        return row;
+      });
       
+      // 조회 결과 반환 시 정렬 상태도 초기 상태('none')로 리셋하여 정렬 정합성 보장
+      setSortConfig({ key: "", direction: "none" });
+
       setGridData(updatedRows);
       setIsLoading(false);
       onSelectRow(0); // 첫 번째 행 자동 선택
@@ -177,24 +192,103 @@ export default function GridPreview({
     }
   };
 
-  React.useEffect(() => {
-    // 컴포넌트가 처음 로드될 때 gridData의 최초 상태를 딥 카피하여 저장합니다.
-    if (snapshotRef.current.length === 0 && gridData.length > 0) {
-      snapshotRef.current = JSON.parse(JSON.stringify(gridData));
+  // [Day 33 작업] dw_1.SetSort() 및 dw_1.Sort() 대치용 동적 정렬 이벤트 핸들러 및 처리기
+  /*
+   * 파워빌더 dw_1.SetSort() 및 dw_1.Sort()와 현대 React 상태 기반 정렬의 상호 대치성 (교육용 상세 설명)
+   * 
+   * 1. 파워빌더(레거시 C/S)의 정렬 메커니즘:
+   *    파워빌더에서는 `dw_1.SetSort("column_name A")`로 정렬 기준 문자열을 정의하고, 
+   *    `dw_1.Sort()`를 순차적으로 호출하여 클라이언트 측의 데이터 윈도우 프라이머리 버퍼(Primary Buffer) 내부 포인터 순서를 물리적으로 재정렬합니다.
+   *    이때, 데이터 버퍼의 로우가 직접 변경되므로 메모리 주소가 바인딩된 컴포넌트는 C++ 로우 레벨 엔진에 의해 화면이 갱신됩니다.
+   * 
+   * 2. 현대 React 아키텍처의 상태 불변성(Immutability) 기반 정렬 및 재렌더링:
+   *    React 환경에서는 상태 데이터의 직접적인 수정(Mutation)을 엄격히 금지합니다.
+   *    따라서, 정렬 상태(sortConfig: 컬럼 키 및 방향)가 변경될 때마다 불변 객체 원칙에 따라 데이터 배열을 복제(Deep Copy)한 후,
+   *    JavaScript 내장 Array.prototype.sort() 메소드를 호출하여 정렬을 수행하고 `setGridData`를 통해 완전히 새로운 배열 참조를 갱신합니다.
+   *    이로 인해 React의 가상 DOM(Virtual DOM)이 차이점을 분석(Diffing)하여 변경이 발생한 DOM 노드만을 신속하고 안전하게 재렌더링합니다.
+   * 
+   * 3. 인덱스 기반 기능들과의 충돌을 방지하는 삼중 버퍼 동기식 정렬 (Triple Buffer Sync):
+   *    레거시의 4방향 키보드 이동, 개별 행 원복(Undo), 수정 상태 감지(isRowModified) 등의 기능은 행의 배열 인덱스(`rIdx`)에 강하게 결속되어 있습니다.
+   *    단순히 gridData만 정렬하면 렌더링 순서가 바뀌면서 snapshotRef 및 initialGridDataRef와의 인덱스 매핑이 깨져 
+   *    엉뚱한 행이 수정된 것으로 표시되거나 원복 기능이 오작동하게 됩니다.
+   *    이러한 문제를 방지하기 위해 본 핸들러는 `gridData`뿐만 아니라 비교 대상인 `initialGridDataRef.current`와 `snapshotRef.current` 레퍼런스 배열도
+   *    동일한 비교 로직으로 정렬하여 삼중 버퍼의 인덱스 일치성을 100% 영구 동기화합니다.
+   */
+  const handleSort = (colName: string) => {
+    // 1. 순환 정렬 방향 설정: none -> asc -> desc -> none
+    let nextDirection: "asc" | "desc" | "none" = "asc";
+    if (sortConfig.key === colName) {
+      if (sortConfig.direction === "asc") nextDirection = "desc";
+      else if (sortConfig.direction === "desc") nextDirection = "none";
+      else nextDirection = "asc";
     }
-  }, [gridData]);
+
+    setSortConfig({ key: colName, direction: nextDirection });
+
+    // 2. 정렬 비교 함수(Comparator) 정의
+    const compareFn = (a: { [key: string]: string }, b: { [key: string]: string }) => {
+      // 정렬이 해제된 경우 원래 순서(__originalIndex) 기준으로 복구
+      if (nextDirection === "none") {
+        const idxA = parseInt(a.__originalIndex || "0", 10);
+        const idxB = parseInt(b.__originalIndex || "0", 10);
+        return idxA - idxB;
+      }
+
+      const valA = a[colName] ?? "";
+      const valB = b[colName] ?? "";
+
+      // 숫자형 컬럼인지 판별하여 값 기반 정렬 수행
+      const isNum = isNumericColumn(parsedData.columns?.find((c) => c.name === colName)?.type || "");
+      if (isNum) {
+        const numA = parseFloat(valA.replace(/,/g, "")) || 0;
+        const numB = parseFloat(valB.replace(/,/g, "")) || 0;
+        return nextDirection === "asc" ? numA - numB : numB - numA;
+      }
+
+      // 문자열 컬럼의 경우 한국어 가나다 및 대소문자 구분 로캘(Locale) 정렬 대응
+      return nextDirection === "asc"
+        ? valA.localeCompare(valB, "ko", { numeric: true })
+        : valB.localeCompare(valA, "ko", { numeric: true });
+    };
+
+    // 3. 삼중 버퍼 동시 정렬을 수행하여 인덱스 참조 정합성 보장
+    const sortedGridData = [...gridData].sort(compareFn);
+    const sortedInitial = [...initialGridDataRef.current].sort(compareFn);
+    const sortedSnapshot = [...snapshotRef.current].sort(compareFn);
+
+    setGridData(sortedGridData);
+    initialGridDataRef.current = sortedInitial;
+    snapshotRef.current = sortedSnapshot;
+
+    // 첫 행 자동 선택으로 부드러운 전환 효과 제공
+    onSelectRow(0);
+  };
+
+  // [Day 33 작업] 부모 컴포넌트로부터 유입되는 최초 gridData에 순서 복원용 고유 인덱스(__originalIndex) 주입
+  React.useEffect(() => {
+    if (gridData.length > 0 && !gridData[0].hasOwnProperty("__originalIndex")) {
+      setGridData((prev) =>
+        prev.map((row, idx) => (row.__originalIndex ? row : { ...row, __originalIndex: String(idx) }))
+      );
+    }
+  }, [gridData, setGridData]);
 
   React.useEffect(() => {
-    // parsedData가 변경되었거나, 상위에서 gridData의 로드/리셋으로 길이가 달라진 경우 초기 캡처를 수행합니다.
-    if (
-      prevParsedDataRef.current !== parsedData ||
-      initialGridDataRef.current.length !== gridData.length ||
-      initialGridDataRef.current.length === 0
-    ) {
-      initialGridDataRef.current = JSON.parse(JSON.stringify(gridData));
-      prevParsedDataRef.current = parsedData;
+    // __originalIndex가 정상 주입된 상태에서만 snapshot 및 initial 상태 백업을 수행합니다.
+    if (gridData.length > 0 && gridData.every((row) => row.hasOwnProperty("__originalIndex"))) {
+      if (snapshotRef.current.length === 0) {
+        snapshotRef.current = JSON.parse(JSON.stringify(gridData));
+      }
+      if (
+        prevParsedDataRef.current !== parsedData ||
+        initialGridDataRef.current.length !== gridData.length ||
+        initialGridDataRef.current.length === 0
+      ) {
+        initialGridDataRef.current = JSON.parse(JSON.stringify(gridData));
+        prevParsedDataRef.current = parsedData;
+      }
     }
-  }, [parsedData, gridData]);
+  }, [gridData, parsedData]);
 
   // [Day 25 작업] 전체 초기화(Reset) 핸들러
   const handleResetAll = () => {
@@ -235,9 +329,11 @@ export default function GridPreview({
         });
 
         if (isModified) {
+          // [Day 33 작업] 임시 정렬 관리 속성인 __originalIndex를 JSON 덤프 데이터에서 제외
+          const { __originalIndex, ...cleanRow } = row;
           return {
             row_no: rIdx + 1,
-            data: row,
+            data: cleanRow,
           };
         }
         return null;
@@ -398,11 +494,32 @@ export default function GridPreview({
               {(parsedData.columns || []).map((c, i) => (
                 <th
                   key={i}
-                  className={`p-3 font-mono text-slate-300 bg-slate-900 ${getAlignClass(
+                  onClick={() => handleSort(c.name)}
+                  className={`p-3 font-mono text-slate-300 bg-slate-900 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-all border-r border-slate-900/40 relative group ${getAlignClass(
                     c.alignment
                   )}`}
+                  title="클릭하여 순환 정렬 (기본값 ➔ 오름차순 ➔ 내림차순)"
                 >
-                  {c.label || c.name}
+                  <div className="flex items-center justify-between gap-2">
+                    <span>{c.label || c.name}</span>
+                    <span
+                      className={`text-[9px] font-bold px-1 py-0.5 rounded transition-all duration-300 ${
+                        sortConfig.key === c.name && sortConfig.direction !== "none"
+                          ? sortConfig.direction === "asc"
+                            ? "text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                            : "text-purple-400 bg-purple-950/40 border border-purple-500/20 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
+                          : "text-slate-600 border border-transparent group-hover:text-slate-400"
+                      }`}
+                    >
+                      {sortConfig.key === c.name
+                        ? sortConfig.direction === "asc"
+                          ? "▲"
+                          : sortConfig.direction === "desc"
+                          ? "▼"
+                          : "-"
+                        : "-"}
+                    </span>
+                  </div>
                 </th>
               ))}
               {(parsedData.computedFields || []).map((comp, i) => (
