@@ -1,5 +1,6 @@
 // [Day 21 작업] 데이터윈도우 웹 변환 그리드 프리뷰 컴포넌트
 // [Day 32 작업] 상단 Retrieval Argument 조회 바 및 동적 데이터 바인딩 고도화
+// [Day 34 작업] 그리드 런타임 결과 내 실시간 와일드카드 필터링(Filter) 고도화 구현
 "use client";
 
 import React from "react";
@@ -54,6 +55,9 @@ export default function GridPreview({
   const [searchKeyword, setSearchKeyword] = React.useState<string>("김개발"); // 사용성 향상을 위한 초기 기본값 지정
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
 
+  // [Day 34 작업] 결과 내 실시간 와일드카드 필터링 키워드 로컬 상태 선언
+  const [filterKeyword, setFilterKeyword] = React.useState<string>("");
+
   // [Day 33 작업] 정렬 상태 관리를 위한 React 로컬 상태 추가
   // key: 정렬 대상 컬럼명, direction: 정렬 방향 (asc: 오름차순, desc: 내림차순, none: 정렬 안 함)
   const [sortConfig, setSortConfig] = React.useState<{ key: string; direction: "asc" | "desc" | "none" }>({
@@ -100,35 +104,41 @@ export default function GridPreview({
     return row;
   };
 
-  // // [Day 32 작업] dw_1.Retrieve(as_dept) 대응 조회 이벤트 핸들러
+  // [Day 34 작업] dw_1.SetFilter() 및 dw_1.Filter() 대치용 React 파생 상태(Derived State) 필터링 핸들러
   /*
-   * 파워빌더 dw_1.Retrieve(as_dept)와 현대 웹 React의 State 단방향 데이터 흐름 비교 (교육용 설명)
+   * 파워빌더 dw_1.SetFilter() / Filter() 와 현대 React 파생 상태(Derived State) 기반 필터링 비교 (교육용 설명)
    * 
-   * 1. 파워빌더(레거시 C/S)의 Retrieve 아규먼트 바인딩 방식:
-   *    과거 C/S 환경인 파워빌더에서는 dw_1.Retrieve("개발팀")과 같이 데이터 아규먼트(Retrieval Arguments)를 주입하면
-   *    내부 DataWindow Engine이 DB 접속 커넥션을 점유한 상태로 `SELECT ... WHERE dept = :as_dept` 구문의 
-   *    플레이스홀더(:as_dept)에 매개변수를 직접 바인딩하여 쿼리를 수행하고 결과 레코드를 1:1로 클라이언트 메모리 버퍼에 적재했습니다.
-   *    이 방식은 DB 의존적이며 동기식 처리가 일반적이어서, 조회 연산 중 화면이 먹통이 되거나 동시성 제어가 어려웠습니다.
+   * 1. 파워빌더(레거시 C/S)의 필터링 메커니즘:
+   *    파워빌더에서는 `dw_1.SetFilter("emp_name like '%홍%'")`와 같이 조건식 문자열을 설정한 후,
+   *    `dw_1.Filter()`를 호출하면 C++ 데이터윈도우 엔진이 프라이머리 버퍼(Primary Buffer)에 적재된 로우 중에서
+   *    조건식을 불충족하는 로우들을 필터 버퍼(Filter Buffer)로 직접 강제 격리시킵니다.
+   *    화면에는 프라이머리 버퍼에 잔류한 가시 행들만 리렌더링되며, 이후 정렬이나 갱신 시 버퍼 간의 로우 포인터가 직접 교환됩니다.
+   *    이 방식은 원본 상태(메모리 데이터)를 물리적으로 나누고 상태를 분할 관리하므로 복원(Undo)이나 다차원 연동이 비직관적이었습니다.
    * 
-   * 2. 현대 웹 표준 React 아키텍처의 클라이언트 사이드 State 필터링 및 단방향 데이터 흐름:
-   *    현대적인 웹 브라우저 환경에서는 DB에 직접 질의하지 않고 백엔드 API 서버를 비동기로 호출(Asynchronous fetch)하거나,
-   *    클라이언트 사이드에서 불변 상태 객체(Immutable State)를 가공 및 필터링하여 UI를 동적으로 리렌더링하는 
-   *    선언형 데이터 제어 패러다임을 따릅니다.
-   *    본 컴포넌트에서는 파워빌더 개발자들의 직관적인 이해를 돕기 위해 아래와 같은 구조로 대치 구현되었습니다:
-   *    
-   *    - 비동기 로딩 시뮬레이션 (0.3초):
-   *      실제 네트워크 통신에 따른 응답 지연을 재현하고자 `isLoading` 상태를 활성화하고 `setTimeout`을 통해 
-   *      0.3초간 그리드 뷰포트에 '데이터 조회 중...' 스피너 오버레이를 표출하여 웹 ERP 사양의 UX를 보장합니다.
+   * 2. 현대 React 아키텍처의 파생 상태(Derived State) 및 선언형(Declarative) 필터링:
+   *    React 환경에서는 단일 진실 공급원(Single Source of Truth) 원칙 하에, 원본 데이터 상태인 `gridData`를 절대로 훼손하지 않습니다.
+   *    사용자가 필터 인풋을 입력할 때마다 `filterKeyword` 로컬 상태(State)만 변경해 주고,
+   *    화면을 렌더링하기 직전에 원본 `gridData`를 스캔하여 조건에 맞는 행만 가공해서 생성하는 '파생 상태(Derived State)' 구조로 평가합니다.
+   *    - `useMemo` 훅을 활용하여 `gridData`나 `filterKeyword`가 변하지 않았다면 이전 가공 데이터를 재사용(Memoization)해 렌더링 부하를 최소화합니다.
+   *    - 데이터의 원본이 훼손되지 않으므로, 필터를 끄거나 키워드를 지우면 별도의 쿼리나 백업 복구 없이도 즉시 원본 전체 화면으로 복원됩니다.
    * 
-   *    - 클라이언트 사이드 불변 상태 필터링 (State Filtering):
-   *      Dropdown 및 Input 상태(selectedDept, searchKeyword)를 단방향 데이터 바인딩 형태로 참조하여 
-   *      `MOCK_MASTER_DATA` 배열 내에서 원하는 조건의 행들만 신속하게 필터링합니다.
-   * 
-   *    - 버퍼 기준점 동화(Snapshot Synchronization):
-   *      필터링된 새로운 데이터셋을 상위 Props 콜백인 `setGridData`를 통해 변경(Mutation)해준 뒤,
-   *      기존의 수정 변동 여부 감지 로직이 오차 없이 작동하도록 복원/비교용 버퍼 레퍼런스(`snapshotRef.current`, `initialGridDataRef.current`)를
-   *      새로 조회된 결과 데이터셋의 복제본(Deep Copy)으로 즉시 덮어씌워 동기화합니다.
+   * 3. 인덱스 매핑의 해결:
+   *    파워빌더 버퍼 필터링 시에는 `GetRow()`나 `rIdx` 등이 화면 가시 기준 인덱스로 고정되지만, 
+   *    리액트에서는 `{ row, index }` 구조로 원본 `gridData` 내에서의 절대 인덱스(`index`)를 항상 내장하여 전달함으로써,
+   *    필터링 작동 중에 데이터를 수정하고, 개별 복구(Undo)를 가동하고, 변경 카운팅을 유지하는 동작들이 인덱스 꼬임 현상 없이 100% 무결하게 작동합니다.
    */
+  const filteredRows = React.useMemo(() => {
+    const lowerKeyword = filterKeyword.toLowerCase().trim();
+    return gridData.map((row, index) => ({ row, index })).filter(({ row }) => {
+      if (!lowerKeyword) return true;
+      return (parsedData.columns || []).some((col) => {
+        const val = row[col.name] ?? "";
+        return val.toLowerCase().includes(lowerKeyword);
+      });
+    });
+  }, [gridData, filterKeyword, parsedData.columns]);
+
+  // // [Day 32 작업] dw_1.Retrieve(as_dept) 대응 조회 이벤트 핸들러
   const handleRetrieve = () => {
     setIsLoading(true);
     
@@ -150,6 +160,8 @@ export default function GridPreview({
       
       // 조회 결과 반환 시 정렬 상태도 초기 상태('none')로 리셋하여 정렬 정합성 보장
       setSortConfig({ key: "", direction: "none" });
+      // 필터 키워드 또한 조회 시 함께 리셋하여 데이터가 가려지지 않도록 보장
+      setFilterKeyword("");
 
       setGridData(updatedRows);
       setIsLoading(false);
@@ -193,27 +205,6 @@ export default function GridPreview({
   };
 
   // [Day 33 작업] dw_1.SetSort() 및 dw_1.Sort() 대치용 동적 정렬 이벤트 핸들러 및 처리기
-  /*
-   * 파워빌더 dw_1.SetSort() 및 dw_1.Sort()와 현대 React 상태 기반 정렬의 상호 대치성 (교육용 상세 설명)
-   * 
-   * 1. 파워빌더(레거시 C/S)의 정렬 메커니즘:
-   *    파워빌더에서는 `dw_1.SetSort("column_name A")`로 정렬 기준 문자열을 정의하고, 
-   *    `dw_1.Sort()`를 순차적으로 호출하여 클라이언트 측의 데이터 윈도우 프라이머리 버퍼(Primary Buffer) 내부 포인터 순서를 물리적으로 재정렬합니다.
-   *    이때, 데이터 버퍼의 로우가 직접 변경되므로 메모리 주소가 바인딩된 컴포넌트는 C++ 로우 레벨 엔진에 의해 화면이 갱신됩니다.
-   * 
-   * 2. 현대 React 아키텍처의 상태 불변성(Immutability) 기반 정렬 및 재렌더링:
-   *    React 환경에서는 상태 데이터의 직접적인 수정(Mutation)을 엄격히 금지합니다.
-   *    따라서, 정렬 상태(sortConfig: 컬럼 키 및 방향)가 변경될 때마다 불변 객체 원칙에 따라 데이터 배열을 복제(Deep Copy)한 후,
-   *    JavaScript 내장 Array.prototype.sort() 메소드를 호출하여 정렬을 수행하고 `setGridData`를 통해 완전히 새로운 배열 참조를 갱신합니다.
-   *    이로 인해 React의 가상 DOM(Virtual DOM)이 차이점을 분석(Diffing)하여 변경이 발생한 DOM 노드만을 신속하고 안전하게 재렌더링합니다.
-   * 
-   * 3. 인덱스 기반 기능들과의 충돌을 방지하는 삼중 버퍼 동기식 정렬 (Triple Buffer Sync):
-   *    레거시의 4방향 키보드 이동, 개별 행 원복(Undo), 수정 상태 감지(isRowModified) 등의 기능은 행의 배열 인덱스(`rIdx`)에 강하게 결속되어 있습니다.
-   *    단순히 gridData만 정렬하면 렌더링 순서가 바뀌면서 snapshotRef 및 initialGridDataRef와의 인덱스 매핑이 깨져 
-   *    엉뚱한 행이 수정된 것으로 표시되거나 원복 기능이 오작동하게 됩니다.
-   *    이러한 문제를 방지하기 위해 본 핸들러는 `gridData`뿐만 아니라 비교 대상인 `initialGridDataRef.current`와 `snapshotRef.current` 레퍼런스 배열도
-   *    동일한 비교 로직으로 정렬하여 삼중 버퍼의 인덱스 일치성을 100% 영구 동기화합니다.
-   */
   const handleSort = (colName: string) => {
     // 1. 순환 정렬 방향 설정: none -> asc -> desc -> none
     let nextDirection: "asc" | "desc" | "none" = "asc";
@@ -295,6 +286,7 @@ export default function GridPreview({
     if (snapshotRef.current.length > 0) {
       const resetSnapshot = JSON.parse(JSON.stringify(snapshotRef.current));
       setGridData(resetSnapshot);
+      setFilterKeyword(""); // 리셋 시 필터 또한 리셋
       // 비교용 reference 데이터 또한 초기 원본 상태로 동기화하여 변경 감지 카운터를 리셋합니다.
       initialGridDataRef.current = JSON.parse(JSON.stringify(snapshotRef.current));
     }
@@ -467,6 +459,35 @@ export default function GridPreview({
         </button>
       </div>
 
+      {/* [Day 34 작업] 결과 내 필터링 인풋 입력 UI 컴포넌트 추가 (다크 네온 디자인) */}
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0a0f1d]/90 border border-cyan-950/60 rounded-xl shadow-lg relative overflow-hidden">
+        {/* 네온 백그라운드 빛 효과 */}
+        <div className="absolute -top-10 -left-10 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none"></div>
+        <div className="flex items-center gap-2 z-10">
+          <span className="text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider">dw_1.Filter()</span>
+          <span className="text-xs text-slate-300 font-bold">결과 내 실시간 필터링 🔍</span>
+        </div>
+        <div className="relative flex items-center z-10 w-full sm:w-72">
+          <input
+            type="text"
+            placeholder="필터 키워드 입력 (전체 컬럼 검색)..."
+            value={filterKeyword}
+            onChange={(e) => setFilterKeyword(e.target.value)}
+            className="bg-slate-950 border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-500 text-xs text-slate-300 placeholder-slate-600 rounded px-3 py-1.5 w-full focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-all pl-8 shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)]"
+          />
+          <span className="absolute left-2.5 text-xs text-cyan-500 pointer-events-none">🔍</span>
+          {filterKeyword && (
+            <button
+              onClick={() => setFilterKeyword("")}
+              className="absolute right-2 text-xs text-slate-500 hover:text-slate-300 focus:outline-none cursor-pointer"
+              title="필터 키워드 초기화"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* 고속 입력용 가변 뷰포트 및 스크롤 최적화 구역 */}
       <div className="relative overflow-x-auto overflow-y-auto border border-slate-900 rounded-xl min-h-[260px] max-h-[400px] scrollbar-thin">
         {/* [Day 32 작업] 데이터 조회 중 로딩 레이어 오버레이 */}
@@ -534,14 +555,21 @@ export default function GridPreview({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-900 text-slate-300">
+            {/* [Day 34 작업] 실시간 필터링 결과 및 원본 부재 시의 조건부 렌더링 대응 */}
             {gridData.length === 0 ? (
               <tr>
                 <td colSpan={(parsedData.columns?.length || 0) + (parsedData.computedFields?.length || 0) + 2} className="p-8 text-center text-slate-500 italic">
                   조회 결과 데이터가 존재하지 않습니다. 상단 조건바에서 조회해 주십시오.
                 </td>
               </tr>
+            ) : filteredRows.length === 0 ? (
+              <tr>
+                <td colSpan={(parsedData.columns?.length || 0) + (parsedData.computedFields?.length || 0) + 2} className="p-8 text-center text-cyan-400 bg-slate-950/80 border border-cyan-900/30 font-medium italic">
+                  🔍 필터링 조건에 부합하는 데이터가 존재하지 않습니다. (검색어: &quot;{filterKeyword}&quot;)
+                </td>
+              </tr>
             ) : (
-              gridData.map((row, rIdx) => {
+              filteredRows.map(({ row, index: rIdx }, fIdx) => {
                 const isModified = isRowModified(row, rIdx);
                 const isSelected = selectedRowIndex === rIdx;
                 const rowBgClass = isSelected
@@ -566,7 +594,7 @@ export default function GridPreview({
                         ? "border-l-4 border-l-emerald-500 bg-emerald-950/20 text-emerald-400 font-bold" 
                         : "text-slate-600"
                     }`}>
-                      {rIdx + 1}
+                      {fIdx + 1}
                     </td>
                     {(parsedData.columns || []).map((col, cIdx) => {
                       let isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
@@ -597,14 +625,17 @@ export default function GridPreview({
                           e.currentTarget.select();
                         };
 
+                        // [Day 34 작업] 필터링 조건에서도 정합성을 잃지 않는 4방향 키보드 이동 및 엔터 핸들러
                         const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
                           const columnsCount = parsedData.columns ? parsedData.columns.length : 0;
-                          const rowsCount = gridData.length;
+                          const currentFilteredIdx = filteredRows.findIndex(item => item.index === rIdx);
 
                           if (e.key === "ArrowDown") {
                             e.preventDefault();
-                            let nextRow = rIdx + 1;
-                            while (nextRow < rowsCount) {
+                            if (currentFilteredIdx === -1) return;
+                            let nextFilteredIdx = currentFilteredIdx + 1;
+                            while (nextFilteredIdx < filteredRows.length) {
+                              const nextRow = filteredRows[nextFilteredIdx].index;
                               const target = document.querySelector(
                                 `input[data-row="${nextRow}"][data-col="${col.name}"]`
                               ) as HTMLInputElement | null;
@@ -613,12 +644,14 @@ export default function GridPreview({
                                 onSelectRow(nextRow);
                                 break;
                               }
-                              nextRow++;
+                              nextFilteredIdx++;
                             }
                           } else if (e.key === "ArrowUp") {
                             e.preventDefault();
-                            let prevRow = rIdx - 1;
-                            while (prevRow >= 0) {
+                            if (currentFilteredIdx === -1) return;
+                            let prevFilteredIdx = currentFilteredIdx - 1;
+                            while (prevFilteredIdx >= 0) {
+                              const prevRow = filteredRows[prevFilteredIdx].index;
                               const target = document.querySelector(
                                 `input[data-row="${prevRow}"][data-col="${col.name}"]`
                               ) as HTMLInputElement | null;
@@ -627,7 +660,7 @@ export default function GridPreview({
                                 onSelectRow(prevRow);
                                 break;
                               }
-                              prevRow--;
+                              prevFilteredIdx--;
                             }
                           } else if (e.key === "ArrowRight") {
                             e.preventDefault();
@@ -659,33 +692,38 @@ export default function GridPreview({
                             }
                           } else if (e.key === "Enter") {
                             e.preventDefault();
+                            if (currentFilteredIdx === -1) return;
                             let targetFound = false;
 
-                            let nextRow = rIdx + 1;
-                            while (nextRow < rowsCount) {
+                            let nextFilteredIdx = currentFilteredIdx + 1;
+                            while (nextFilteredIdx < filteredRows.length) {
+                              const nextRow = filteredRows[nextFilteredIdx].index;
                               const target = document.querySelector(
                                 `input[data-row="${nextRow}"][data-col="${col.name}"]`
                               ) as HTMLInputElement | null;
                               if (target && !target.readOnly && target.tabIndex !== -1) {
                                 target.focus();
+                                onSelectRow(nextRow);
                                 targetFound = true;
                                 break;
                               }
-                              nextRow++;
+                              nextFilteredIdx++;
                             }
 
                             if (!targetFound) {
-                              let startRow = rIdx;
+                              let startFilteredIdx = currentFilteredIdx;
                               let startCol = cIdx + 1;
-                              for (let r = startRow; r < rowsCount; r++) {
-                                const startC = (r === startRow) ? startCol : 0;
+                              for (let f = startFilteredIdx; f < filteredRows.length; f++) {
+                                const targetRow = filteredRows[f].index;
+                                const startC = (f === startFilteredIdx) ? startCol : 0;
                                 for (let c = startC; c < columnsCount; c++) {
                                   const targetCol = parsedData.columns[c];
                                   const target = document.querySelector(
-                                    `input[data-row="${r}"][data-col="${targetCol.name}"]`
+                                    `input[data-row="${targetRow}"][data-col="${targetCol.name}"]`
                                   ) as HTMLInputElement | null;
                                   if (target && !target.readOnly && target.tabIndex !== -1) {
                                     target.focus();
+                                    onSelectRow(targetRow);
                                     targetFound = true;
                                     break;
                                   }
