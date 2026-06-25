@@ -75,6 +75,88 @@ export default function GridPreview({
   // [Day 30 작업] 클립보드 복사 완료 상태 관리용 토스트 플래그
   const [copied, setCopied] = React.useState<boolean>(false);
 
+  // [Day 35 작업] 실시간 유효성 검증(Validation) 및 레거시 ItemChanged / dw_1.Find() 대치 로직
+  /*
+   * 파워빌더 레거시 메커니즘 vs 현대 리액트 선언형 아키텍처 비교 설명 (교육용 주석)
+   * 
+   * 1. 파워빌더 (레거시 C/S 환경):
+   *    - 파워빌더에서는 사용자가 셀(Column) 값을 수정하고 포커스를 잃을 때 `ItemChanged` 이벤트가 동기적으로 발생합니다.
+   *    - 이 이벤트 내에서 입력된 신규 값(data)의 유효성을 검증하며, 유효하지 않은 경우 Action Code를 반환하여 포커스 아웃을 막거나 입력을 거부합니다.
+   *    - 최종적으로 모든 수정이 끝난 후 `dw_1.AcceptText()`를 호출하여 화면의 버퍼 값을 데이터윈도우의 Primary Buffer로 강제 승인합니다.
+   *    - 특정 조건의 잘못된 로우를 찾아내기 위해서는 `dw_1.Find("IsNull(emp_name) or emp_name = ''", 1, dw_1.RowCount())`와 같이
+   *      C++ 내장 탐색 엔진을 명시적 루프로 호출하여 에러 행의 포인터를 역추적해 이동해야 했습니다.
+   * 
+   * 2. 현대 React 아키텍처 (선언형/실시간 환경):
+   *    - React 환경에서는 사용자의 키 입력이 일어날 때마다 `onChange` 핸들러가 트리거되어 단일 상태 원천(Single Source of Truth)인 `gridData`를 즉시 업데이트합니다.
+   *    - 별도의 `AcceptText()` 호출 없이도 데이터의 변경은 즉시 선언형 데이터 흐름에 반영됩니다.
+   *    - 본 컴포넌트에서는 `gridData` 상태가 변경될 때마다 `useEffect` 훅을 통해 전체 행을 스캔하는 `validateGridData` 함수를 자동으로 트리거합니다.
+   *    - JavaScript의 고차 함수(`reduce`, `forEach`)를 활용한 선언형 배열 탐색 알고리즘을 활용하여, 특정 컬럼(사원명, 부서명, 사번 등)의
+   *      필수값 누락 여부 및 형식 오류(예: 실적 필드의 숫자 형식 위반)를 O(N) 복잡도로 초고속 전수 스캔합니다.
+   *    - 감지된 검증 에러는 `validationErrors` 상태로 기록되며, 이 상태와 렌더링 파이프라인이 즉각 연동되어 해당 행의 배경색(다크 레드/주황 네온)을 변경하고,
+   *      하단 터미널 로그창에 빨간색 에러 텍스트(`[VALIDATION ERROR]`)를 실시간으로 스트리밍 출력하게 됩니다.
+   */
+  const [validationErrors, setValidationErrors] = React.useState<{ [rowIndex: number]: string }>({});
+
+  const validateGridData = React.useCallback((data: Array<{ [key: string]: string }>) => {
+    const errors: { [rowIndex: number]: string } = {};
+    
+    data.forEach((row, idx) => {
+      // 1. 필수값 누락 검증 (사원명: rep/name, 부서명: dept/region, 사번: emp_id/id)
+      const empName = row.rep ?? row.name ?? "";
+      const deptName = row.dept ?? row.region ?? "";
+      const empId = row.emp_id ?? row.id ?? "";
+
+      if (!empId.trim()) {
+        errors[idx] = `[VALIDATION ERROR] ${idx + 1}번째 행의 필수 항목인 '사번'이 누락되었습니다.`;
+        return;
+      }
+      if (!empName.trim()) {
+        errors[idx] = `[VALIDATION ERROR] ${idx + 1}번째 행의 필수 항목인 '사원명'이 누락되었습니다.`;
+        return;
+      }
+      if (!deptName.trim()) {
+        errors[idx] = `[VALIDATION ERROR] ${idx + 1}번째 행의 필수 항목인 '부서명'이 누락되었습니다.`;
+        return;
+      }
+
+      // 2. 형식 검증 (실적/sales가 비어있지 않은 경우 숫자 형식인지 체크)
+      const salesVal = row.sales ?? "";
+      if (salesVal.trim()) {
+        const cleanSales = salesVal.replace(/,/g, "");
+        if (isNaN(Number(cleanSales))) {
+          errors[idx] = `[VALIDATION ERROR] ${idx + 1}번째 행의 실적(Sales) 필드가 올바른 숫자 형식이 아닙니다.`;
+          return;
+        }
+      }
+    });
+
+    setValidationErrors(errors);
+  }, []);
+
+  // gridData의 변경을 실시간으로 감시하여 유효성 검증 수행
+  React.useEffect(() => {
+    validateGridData(gridData);
+  }, [gridData, validateGridData]);
+
+  // 실시간 에러 발생 시 하단 터미널에 에러 문구를 실시간 스트리밍 출력
+  React.useEffect(() => {
+    const errorKeys = Object.keys(validationErrors);
+    if (errorKeys.length > 0) {
+      const errorMsg = errorKeys
+        .map((k) => validationErrors[Number(k)])
+        .join("\n");
+      setDumpOutput(errorMsg);
+    } else {
+      // 에러가 없고 기존 dumpOutput이 에러 메시지 형식을 띠고 있다면(즉, "[VALIDATION ERROR]"를 포함하고 있다면) 지워주거나 초기화
+      setDumpOutput((prev) => {
+        if (prev && prev.includes("[VALIDATION ERROR]")) {
+          return null;
+        }
+        return prev;
+      });
+    }
+  }, [validationErrors]);
+
   // [Day 32 작업] 파싱된 컬럼 정보 규격에 맞게 동적 데이터 행을 조립하는 헬퍼 함수
   const generateRowData = (mockItem: typeof MOCK_MASTER_DATA[0], columns: ColumnInfo[]) => {
     const row: { [key: string]: string } = {};
@@ -309,6 +391,16 @@ export default function GridPreview({
 
   // [Day 29 작업] 데이터 추출 핸들러 및 파워빌더 dw_1.Update() 메커니즘 연동
   const handleSaveAndExtract = () => {
+    // [Day 35 작업] 저장 및 추출 시점에 최종적으로 에러 상태를 점검하여 추출을 제한합니다.
+    const errorKeys = Object.keys(validationErrors);
+    if (errorKeys.length > 0) {
+      const errorMsg = errorKeys
+        .map((k) => validationErrors[Number(k)])
+        .join("\n");
+      setDumpOutput(errorMsg);
+      return;
+    }
+
     const modifiedRows = gridData
       .map((row, rIdx) => {
         const originalRow = initialGridDataRef.current[rIdx];
@@ -570,13 +662,20 @@ export default function GridPreview({
               </tr>
             ) : (
               filteredRows.map(({ row, index: rIdx }, fIdx) => {
+                const hasError = validationErrors.hasOwnProperty(rIdx);
                 const isModified = isRowModified(row, rIdx);
                 const isSelected = selectedRowIndex === rIdx;
-                const rowBgClass = isSelected
-                  ? "bg-indigo-600/10 border-y border-indigo-500/30 font-bold"
-                  : isModified
-                  ? "bg-emerald-950/10 hover:bg-emerald-950/20"
-                  : "hover:bg-slate-800/40";
+                
+                let rowBgClass = "";
+                if (hasError) {
+                  rowBgClass = "bg-red-950/25 hover:bg-red-950/35 border-y border-red-500/30 text-red-200 shadow-[0_0_12px_rgba(239,68,68,0.15)]";
+                } else if (isSelected) {
+                  rowBgClass = "bg-indigo-600/10 border-y border-indigo-500/30 font-bold";
+                } else if (isModified) {
+                  rowBgClass = "bg-emerald-950/10 hover:bg-emerald-950/20";
+                } else {
+                  rowBgClass = "hover:bg-slate-800/40";
+                }
 
                 return (
                   <tr
@@ -590,7 +689,9 @@ export default function GridPreview({
                     className={`transition-all font-mono cursor-pointer ${rowBgClass}`}
                   >
                     <td className={`p-3 text-center transition-all ${
-                      isModified 
+                      hasError
+                        ? "border-l-4 border-l-red-500 bg-red-950/30 text-red-400 font-bold"
+                        : isModified 
                         ? "border-l-4 border-l-emerald-500 bg-emerald-950/20 text-emerald-400 font-bold" 
                         : "text-slate-600"
                     }`}>
@@ -878,7 +979,11 @@ export default function GridPreview({
 
       {/* TRANSACTION DATA DUMP 로그 터미널 레이어 */}
       {dumpOutput && (
-        <div className="mt-4 bg-black border border-emerald-900/50 rounded-xl p-4 font-mono text-xs text-emerald-400 flex flex-col gap-2 relative shadow-2xl transition-all">
+        <div className={`mt-4 bg-black border rounded-xl p-4 font-mono text-xs flex flex-col gap-2 relative shadow-2xl transition-all ${
+          dumpOutput.includes("[VALIDATION ERROR]")
+            ? "border-red-900/50 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.15)]"
+            : "border-emerald-900/50 text-emerald-400"
+        }`}>
           {/* 복사 완료 알림 레이아웃 */}
           {copied && (
             <div className="absolute top-12 right-4 bg-emerald-950 text-emerald-300 border border-emerald-400/50 px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.5)] animate-bounce z-10 flex items-center gap-1.5">
@@ -886,31 +991,47 @@ export default function GridPreview({
               <span>복사 완료! 📋</span>
             </div>
           )}
-          <div className="flex items-center justify-between border-b border-emerald-900/30 pb-2">
+          <div className={`flex items-center justify-between border-b pb-2 ${
+            dumpOutput.includes("[VALIDATION ERROR]") ? "border-red-900/30" : "border-emerald-900/30"
+          }`}>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span className="font-bold text-emerald-300">
-                [TRANSACTION DATA DUMP] - dw_1.Update() Buffer JSON Output
+              <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${
+                dumpOutput.includes("[VALIDATION ERROR]") ? "bg-red-500" : "bg-emerald-500"
+              }`}></span>
+              <span className={`font-bold ${
+                dumpOutput.includes("[VALIDATION ERROR]") ? "text-red-300" : "text-emerald-300"
+              }`}>
+                {dumpOutput.includes("[VALIDATION ERROR]")
+                  ? "[VALIDATION ERROR LOG] - 실시간 데이터 유효성 검증 오류"
+                  : "[TRANSACTION DATA DUMP] - dw_1.Update() Buffer JSON Output"}
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleCopyToClipboard}
-                className="text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/50 px-2.5 py-1 rounded border border-emerald-500/30 text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 hover:shadow-[0_0_8px_rgba(16,185,129,0.4)]"
-                title="추출된 JSON 문자열을 클립보드에 원클릭 복사합니다."
-              >
-                클립보드 복사 📋
-              </button>
-              <button
-                onClick={handleDownloadJSON}
-                className="text-cyan-400 hover:text-cyan-300 bg-cyan-950/60 hover:bg-cyan-900/50 px-2.5 py-1 rounded border border-cyan-500/30 text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 hover:shadow-[0_0_8px_rgba(34,211,238,0.4)]"
-                title="추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다."
-              >
-                JSON 다운로드 💾
-              </button>
+              {!dumpOutput.includes("[VALIDATION ERROR]") && (
+                <>
+                  <button
+                    onClick={handleCopyToClipboard}
+                    className="text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/50 px-2.5 py-1 rounded border border-emerald-500/30 text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 hover:shadow-[0_0_8px_rgba(16,185,129,0.4)]"
+                    title="추출된 JSON 문자열을 클립보드에 원클릭 복사합니다."
+                  >
+                    클립보드 복사 📋
+                  </button>
+                  <button
+                    onClick={handleDownloadJSON}
+                    className="text-cyan-400 hover:text-cyan-300 bg-cyan-950/60 hover:bg-cyan-900/50 px-2.5 py-1 rounded border border-cyan-500/30 text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 hover:shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                    title="추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다."
+                  >
+                    JSON 다운로드 💾
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => setDumpOutput(null)}
-                className="text-emerald-500 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 px-2.5 py-1 rounded border border-emerald-500/20 text-[10px] font-bold cursor-pointer transition-all"
+                className={`px-2.5 py-1 rounded border text-[10px] font-bold cursor-pointer transition-all ${
+                  dumpOutput.includes("[VALIDATION ERROR]")
+                    ? "text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/50 border-red-500/20"
+                    : "text-emerald-500 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 border-emerald-500/20"
+                }`}
               >
                 닫기 ✕
               </button>
