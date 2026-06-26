@@ -50,6 +50,14 @@ export default function GridPreview({
   selectedRowIndex,
   onSelectRow,
 }: GridPreviewProps) {
+  // [Day 36 작업] 삭제된 레코드를 추적하기 위한 버퍼 상태 및 타입 정의
+  interface DeletedRowInfo {
+    row_no: number;
+    row_status: "Deleted";
+    data: { [key: string]: string };
+  }
+  const [deleteBuffer, setDeleteBuffer] = React.useState<DeletedRowInfo[]>([]);
+
   // [Day 32 작업] 동적 조회(Retrieve) 및 필터링 관련 React 로컬 상태 관리
   const [selectedDept, setSelectedDept] = React.useState<string>("전체");
   const [searchKeyword, setSearchKeyword] = React.useState<string>("김개발"); // 사용성 향상을 위한 초기 기본값 지정
@@ -101,6 +109,11 @@ export default function GridPreview({
     const errors: { [rowIndex: number]: string } = {};
     
     data.forEach((row, idx) => {
+      // [Day 36 작업] 아직 편집하지 않은 순수 신규 행(New)은 필수값 실시간 검증 대상에서 제외
+      if (row.row_status === "New") {
+        return;
+      }
+
       // 1. 필수값 누락 검증 (사원명: rep/name, 부서명: dept/region, 사번: emp_id/id)
       const empName = row.rep ?? row.name ?? "";
       const deptName = row.dept ?? row.region ?? "";
@@ -244,6 +257,9 @@ export default function GridPreview({
       setSortConfig({ key: "", direction: "none" });
       // 필터 키워드 또한 조회 시 함께 리셋하여 데이터가 가려지지 않도록 보장
       setFilterKeyword("");
+      
+      // [Day 36 작업] 신규 조회 시 기존의 삭제 트랜잭션 버퍼 일괄 초기화
+      setDeleteBuffer([]);
 
       setGridData(updatedRows);
       setIsLoading(false);
@@ -369,6 +385,8 @@ export default function GridPreview({
       const resetSnapshot = JSON.parse(JSON.stringify(snapshotRef.current));
       setGridData(resetSnapshot);
       setFilterKeyword(""); // 리셋 시 필터 또한 리셋
+      // [Day 36 작업] 전체 원복 시 삭제 버퍼도 비움으로써 트랜잭션 원복 보장
+      setDeleteBuffer([]);
       // 비교용 reference 데이터 또한 초기 원본 상태로 동기화하여 변경 감지 카운터를 리셋합니다.
       initialGridDataRef.current = JSON.parse(JSON.stringify(snapshotRef.current));
     }
@@ -389,6 +407,103 @@ export default function GridPreview({
     }
   };
 
+  // [Day 36 작업] 파워빌더 dw_1.InsertRow 및 DeleteRow 버퍼 트랜잭션 메커니즘 React 포팅
+  /*
+   * 파워빌더 DWItemStatus 버퍼 트랜잭션 vs React 불변 상태 관리 대치 설명 (교육용 주석)
+   * 
+   * 1. 파워빌더 (레거시 C/S 아키텍처):
+   *    - 파워빌더 데이터윈도우(DataWindow)는 내부적으로 4개의 버퍼(Primary!, Filter!, Delete!, Original!)를 관리합니다.
+   *    - dw_1.InsertRow(0)를 수행하면 Primary! 버퍼에 새 행이 생성되고 상태는 New!가 되며, 이 행의 필드를 수정하면 NewModified!가 됩니다.
+   *    - dw_1.DeleteRow(row)를 수행하면 Primary! 버퍼의 행이 Delete! 버퍼로 이동합니다. 단, 상태가 New! 또는 NewModified!였던 행은 DB 저장 대상이 아니므로 Delete! 버퍼로 가지 않고 소멸합니다.
+   *    - dw_1.Update()가 트리거되면, Primary! 버퍼 내의 NewModified! 행은 INSERT 문을, DataModified! 행은 UPDATE 문을 생성하며, Delete! 버퍼 내의 행들은 DELETE 문을 생성하여 하나의 트랜잭션으로 DB에 일괄 전송됩니다.
+   * 
+   * 2. 현대 웹 React 아키텍처 (선언형/불변성 상태 추적):
+   *    - 리액트는 상태의 불변성(Immutability)을 엄격히 준수하므로 메모리 주소를 직접 수정하지 않고, 상태 복사본을 만들어 교체하는 방식으로 UI를 업데이트합니다.
+   *    - 파워빌더의 Primary! 버퍼는 리액트의 `gridData` 상태 배열로 매핑됩니다.
+   *    - 파워빌더의 Delete! 버퍼는 리액트의 `deleteBuffer` 상태 배열로 명시적 분리되어 관리됩니다.
+   *    - New! 및 NewModified! 상태 전이는 리액트 내부 행 객체의 `row_status` 프로퍼티("New" -> "NewModified")를 직접 제어하여 실시간 추적합니다.
+   *    - dw_1.Update()에 해당하는 저장 기능(`handleSaveAndExtract`)은 이 두 개의 상태(`gridData`와 `deleteBuffer`)를 결합(Join/Reduce)하여
+   *      최종 트랜잭션 JSON 데이터 패킷(Inserted/Updated/Deleted 플래그 포함)을 동적으로 재조합(Derived Data Structure)해 냅니다.
+   *    - 이 방식은 메모리 버퍼 상태의 부수 효과(Side-Effect) 없이, 선언형 데이터 흐름을 통해 데이터 무결성을 100% 보장하는 현대 웹 아키텍처 표준입니다.
+   */
+  const handleInsertRow = () => {
+    // 1. 파티셔닝된 컬럼 스펙에 의거해 기본 공백 값을 갖는 새 로우 객체 동적 빌드
+    const newRow: { [key: string]: string } = {};
+    (parsedData.columns || []).forEach((col) => {
+      if (isNumericColumn(col.type)) {
+        newRow[col.name] = "0";
+      } else {
+        newRow[col.name] = "";
+      }
+    });
+
+    // 2. 파워빌더의 dw_1.InsertRow() 후 New! 상태를 부여하듯 초기 상태 'New' 명시
+    newRow.row_status = "New";
+    
+    // 순서 정렬 복구 및 리액트 가상 돔(Virtual DOM) 렌더링 키값 매핑용 고유 original 인덱스 계산
+    const maxOrgIdx = gridData.reduce((max, r) => {
+      const idx = parseInt(r.__originalIndex || "0", 10);
+      return idx > max ? idx : max;
+    }, 0);
+    newRow.__originalIndex = String(maxOrgIdx + 1);
+
+    // 3. 현재 선택된 행 바로 아래에 신규 행을 밀어 넣고 즉각 포커스 이동 수행
+    setGridData((prev) => {
+      const next = [...prev];
+      const insertIdx = selectedRowIndex >= 0 && selectedRowIndex <= prev.length 
+        ? selectedRowIndex + 1 
+        : prev.length;
+      
+      next.splice(insertIdx, 0, newRow);
+      
+      // 상태 갱신 마이크로태스크 완료 후 뷰포트 행 선택 동기화
+      setTimeout(() => {
+        onSelectRow(insertIdx);
+      }, 0);
+      
+      return next;
+    });
+  };
+
+  const handleDeleteRow = () => {
+    if (selectedRowIndex < 0 || selectedRowIndex >= gridData.length) return;
+
+    const rowToDelete = gridData[selectedRowIndex];
+
+    // 1. 파워빌더 Delete! 버퍼 복제 알고리즘:
+    // 신규 생성 후 커밋된 적 없는 New / NewModified 행은 삭제 시 DB 롤백 대상이 아니므로 버퍼에서 아예 제거하고,
+    // 기존에 DB로부터 로드되었던 행들만 deleteBuffer 상태에 쌓아 Deleted 트랜잭션을 예약합니다.
+    if (rowToDelete.row_status !== "New" && rowToDelete.row_status !== "NewModified") {
+      const { __originalIndex, row_status, ...cleanRow } = rowToDelete;
+      
+      const deletedItem: DeletedRowInfo = {
+        row_no: selectedRowIndex + 1,
+        row_status: "Deleted",
+        data: cleanRow,
+      };
+      
+      setDeleteBuffer((prev) => [...prev, deletedItem]);
+    }
+
+    // 2. 화면 가시 뷰포트(Primary Buffer 역할)에서 해당 행 제거
+    setGridData((prev) => {
+      const next = prev.filter((_, idx) => idx !== selectedRowIndex);
+      
+      // 3. 인접 행으로의 포커스 전환 보정
+      if (next.length > 0) {
+        const nextSelectIdx = selectedRowIndex >= next.length ? next.length - 1 : selectedRowIndex;
+        setTimeout(() => {
+          onSelectRow(nextSelectIdx);
+        }, 0);
+      } else {
+        setTimeout(() => {
+          onSelectRow(-1);
+        }, 0);
+      }
+      return next;
+    });
+  };
+
   // [Day 29 작업] 데이터 추출 핸들러 및 파워빌더 dw_1.Update() 메커니즘 연동
   const handleSaveAndExtract = () => {
     // [Day 35 작업] 저장 및 추출 시점에 최종적으로 에러 상태를 점검하여 추출을 제한합니다.
@@ -401,30 +516,46 @@ export default function GridPreview({
       return;
     }
 
-    const modifiedRows = gridData
-      .map((row, rIdx) => {
-        const originalRow = initialGridDataRef.current[rIdx];
-        if (!originalRow) return null;
-        
-        const isModified = (parsedData.columns || []).some((col) => {
-          const currentVal = row[col.name] ?? "";
-          const originalVal = originalRow[col.name] ?? "";
-          return currentVal !== originalVal;
+    // [Day 36 작업] 3대 트랜잭션 버퍼(Inserted / Updated / Deleted)를 취합하는 JSON 마스터 패킷 생성 알고리즘
+    const changePacket: Array<{
+      row_no: number;
+      row_status: "Inserted" | "Updated" | "Deleted";
+      data: { [key: string]: string };
+    }> = [];
+
+    // 1. 뷰포트 내 행 데이터 탐색 (Inserted, Updated 수집)
+    gridData.forEach((row, rIdx) => {
+      const { __originalIndex, row_status, ...cleanRow } = row;
+
+      if (row.row_status === "NewModified") {
+        // 행 추가 후 내용이 입력된 신규 인서트 건
+        changePacket.push({
+          row_no: rIdx + 1,
+          row_status: "Inserted",
+          data: cleanRow,
         });
-
-        if (isModified) {
-          // [Day 33 작업] 임시 정렬 관리 속성인 __originalIndex를 JSON 덤프 데이터에서 제외
-          const { __originalIndex, ...cleanRow } = row;
-          return {
+      } else if (row.row_status !== "New") {
+        // 기존 조회 행 중 수정 여부 판독
+        if (isRowModified(row, rIdx)) {
+          changePacket.push({
             row_no: rIdx + 1,
+            row_status: "Updated",
             data: cleanRow,
-          };
+          });
         }
-        return null;
-      })
-      .filter((item): item is { row_no: number; data: { [key: string]: string } } => item !== null);
+      }
+    });
 
-    if (modifiedRows.length === 0) {
+    // 2. 삭제 버퍼 내 행 추가 (Deleted 수집)
+    deleteBuffer.forEach((deletedItem) => {
+      changePacket.push({
+        row_no: deletedItem.row_no,
+        row_status: "Deleted",
+        data: deletedItem.data,
+      });
+    });
+
+    if (changePacket.length === 0) {
       setDumpOutput(
         JSON.stringify(
           {
@@ -437,7 +568,9 @@ export default function GridPreview({
         )
       );
     } else {
-      setDumpOutput(JSON.stringify(modifiedRows, null, 2));
+      // 행 번호(row_no) 기준으로 정렬하여 가독성 높은 순차 구조로 덤프 출력
+      const sortedPacket = [...changePacket].sort((a, b) => a.row_no - b.row_no);
+      setDumpOutput(JSON.stringify(sortedPacket, null, 2));
     }
   };
 
@@ -453,10 +586,15 @@ export default function GridPreview({
     });
   };
 
-  // [Day 24 작업] 실시간 변경된 행의 총 개수 계산
-  const modifiedRowsCount = gridData.reduce((count, row, rIdx) => {
-    return count + (isRowModified(row, rIdx) ? 1 : 0);
-  }, 0);
+  // [Day 36 작업] 실시간 변경사항 총 건수 계산 (기존 수정 건 + 신규 입력 건 + 삭제 건)
+  const modifiedRowsCount = React.useMemo(() => {
+    const editCount = gridData.reduce((count, row, rIdx) => {
+      const isNewMod = row.row_status === "NewModified";
+      const isUpdated = row.row_status !== "New" && row.row_status !== "NewModified" && isRowModified(row, rIdx);
+      return count + (isNewMod || isUpdated ? 1 : 0);
+    }, 0);
+    return editCount + deleteBuffer.length;
+  }, [gridData, deleteBuffer]);
 
   return (
     <section className="bg-slate-950/80 border border-slate-900 rounded-2xl overflow-hidden shadow-2xl p-5 flex flex-col gap-4">
@@ -476,6 +614,26 @@ export default function GridPreview({
             <span className={`w-1.5 h-1.5 rounded-full ${modifiedRowsCount > 0 ? "bg-emerald-400" : "bg-slate-600"}`}></span>
             수정 중인 행: {modifiedRowsCount}건
           </span>
+          {/* [Day 36 작업] 다크 네온 스타일 행 추가 및 행 삭제 버튼 */}
+          <button
+            onClick={handleInsertRow}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold border border-cyan-500/30 bg-cyan-950/80 text-cyan-400 hover:bg-cyan-900/50 hover:text-cyan-300 hover:shadow-[0_0_8px_rgba(34,211,238,0.4)] transition-all cursor-pointer"
+            title="새 공백 데이터 행을 추가합니다 (dw_1.InsertRow)."
+          >
+            행 추가 ➕
+          </button>
+          <button
+            onClick={handleDeleteRow}
+            disabled={gridData.length === 0 || selectedRowIndex < 0 || selectedRowIndex >= gridData.length}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold border transition-all ${
+              gridData.length > 0 && selectedRowIndex >= 0 && selectedRowIndex < gridData.length
+                ? "border-pink-500/30 bg-pink-950/80 text-pink-400 hover:bg-pink-900/50 hover:text-pink-300 hover:shadow-[0_0_8px_rgba(244,63,94,0.4)] cursor-pointer"
+                : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
+            }`}
+            title="현재 선택된 행을 즉시 삭제합니다 (dw_1.DeleteRow)."
+          >
+            행 삭제 ➖
+          </button>
           {/* 전체 수정 데이터 일괄 초기화 버튼 */}
           <button
             onClick={handleResetAll}
@@ -852,7 +1010,13 @@ export default function GridPreview({
                                 if (isCellReadOnly) return;
                                 setGridData((prev) => {
                                   const next = [...prev];
-                                  if (next[rIdx]) next[rIdx][col.name] = e.target.value;
+                                  if (next[rIdx]) {
+                                    next[rIdx][col.name] = e.target.value;
+                                    // [Day 36 작업] 신규 행 수정 시 상태를 NewModified로 변경
+                                    if (next[rIdx].row_status === "New") {
+                                      next[rIdx].row_status = "NewModified";
+                                    }
+                                  }
                                   return next;
                                 });
                               }}
@@ -891,7 +1055,13 @@ export default function GridPreview({
                                 const val = formatNumberWithCommas(e.target.value);
                                 setGridData((prev) => {
                                   const next = [...prev];
-                                  if (next[rIdx]) next[rIdx][col.name] = val;
+                                  if (next[rIdx]) {
+                                    next[rIdx][col.name] = val;
+                                    // [Day 36 작업] 신규 행 수정 시 상태를 NewModified로 변경
+                                    if (next[rIdx].row_status === "New") {
+                                      next[rIdx].row_status = "NewModified";
+                                    }
+                                  }
                                   return next;
                                 });
                               }}
@@ -914,7 +1084,13 @@ export default function GridPreview({
                               if (isCellReadOnly) return;
                               setGridData((prev) => {
                                 const next = [...prev];
-                                  if (next[rIdx]) next[rIdx][col.name] = e.target.value;
+                                if (next[rIdx]) {
+                                  next[rIdx][col.name] = e.target.value;
+                                  // [Day 36 작업] 신규 행 수정 시 상태를 NewModified로 변경
+                                  if (next[rIdx].row_status === "New") {
+                                    next[rIdx].row_status = "NewModified";
+                                  }
+                                }
                                 return next;
                               });
                             }}
