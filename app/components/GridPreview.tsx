@@ -83,6 +83,98 @@ export default function GridPreview({
   // [Day 30 작업] 클립보드 복사 완료 상태 관리용 토스트 플래그
   const [copied, setCopied] = React.useState<boolean>(false);
 
+  // [Day 37 작업] 그리드 헤더 컬럼별 너비(px) 상태 관리
+  const [columnWidths, setColumnWidths] = React.useState<{ [key: string]: number }>(() => {
+    const widths: { [key: string]: number } = {};
+    (parsedData.columns || []).forEach((c) => {
+      widths[c.name] = 150; // 기본 컬럼 너비 150px
+    });
+    (parsedData.computedFields || []).forEach((comp) => {
+      widths[comp.name] = 150; // 기본 계산식 컬럼 너비 150px
+    });
+    return widths;
+  });
+
+  // parsedData 변경 시 신규 컬럼에 대한 기본 너비 보정
+  React.useEffect(() => {
+    setColumnWidths((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      (parsedData.columns || []).forEach((c) => {
+        if (next[c.name] === undefined) {
+          next[c.name] = 150;
+          changed = true;
+        }
+      });
+      (parsedData.computedFields || []).forEach((comp) => {
+        if (next[comp.name] === undefined) {
+          next[comp.name] = 150;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [parsedData]);
+
+  // [Day 37 작업] 마우스 드래그를 통한 컬럼 너비 리사이징 이벤트 훅 및 제어 로직
+  /*
+   * 파워빌더 레거시 윈도우 캡처 vs 현대 웹 표준 브라우저 이벤트 모델 비교 (교육용 주석)
+   *
+   * 1. 파워빌더 (레거시 C/S 환경):
+   *    - 파워빌더의 Grid 스타일 데이터윈도우에서는 사용자가 헤더 컬럼 경계선에 마우스 왼쪽 버튼을 클릭하는 순간,
+   *      네이티브 윈도우 커널 API인 `SetCapture(hWnd)`가 명시적/암시적으로 트리거됩니다.
+   *      이를 통해 마우스 포인터가 윈도우 제어 영역(Client Area)을 이탈하더라도 드래그 해제 전까지 모든 마우스 메시지(WM_MOUSEMOVE, WM_LBUTTONUP)가
+   *      해당 데이터윈도우 컨트롤로 독점 전송됩니다.
+   *    - 이후 마우스 버튼을 놓으면 `ReleaseCapture()`를 호출하여 마우스 캡처를 운영체제 시스템에 반환하고 처리를 종료했습니다.
+   *
+   * 2. 현대 웹 표준 브라우저 및 React 선언형 환경:
+   *    - 브라우저 환경에서는 단일 윈도우 스레드가 아니며 뷰포트 내의 다양한 요소들이 이벤트를 수신하므로, 단순히 특정 요소에 이벤트를 바인딩하면
+   *      마우스가 요소를 빠르게 이탈할 때 이벤트 흐름이 끊기거나 드롭이 정상적으로 감지되지 않는 '드래그 끊김(Mouse Evading)' 현상이 발생합니다.
+   *    - 이를 극복하기 위해 사용자가 헤더의 리사이저 영역을 `onMouseDown`으로 클릭했을 때,
+   *      전역 `document` 객체에 직접 `mousemove`와 `mouseup` 이벤트 리스너를 동적으로 부착합니다. (브라우저 수준의 이벤트 캡처링 시뮬레이션)
+   *    - 드래그 동작 중에는 마우스의 실시간 픽셀 변화량 `deltaX`를 측정하고, React의 불변 상태(State)인 `columnWidths`를 갱신합니다.
+   *    - `mouseup` 시점에 `document`에 결합된 리스너들을 동적으로 해제하여 메모리 누수를 방지합니다.
+   *    - 최종 렌더링 시에는 React의 가상 돔(Virtual DOM)과 선언형 인라인 스타일 `style={{ width: columnWidths[colName] }}`이 결합되어,
+   *      실시간 너비 조정이 전체 그리드의 헤더(`<th>`)와 바디 데이터 셀(`<td>`)에 동일 폭으로 즉시 반영됩니다.
+   */
+  const handleResizeStart = (colKey: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation(); // 헤더 정렬(handleSort) 클릭 이벤트 전파 차단
+
+    const startX = e.clientX;
+    const startWidth = columnWidths[colKey] || 150;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const newWidth = Math.max(60, startWidth + deltaX); // 최소 너비 60px 보장
+      setColumnWidths((prev) => ({
+        ...prev,
+        [colKey]: newWidth,
+      }));
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  };
+
+  // [Day 37 작업] 컬럼 너비들의 합산으로 테이블의 전체 고정 폭 계산
+  const totalTableWidth = React.useMemo(() => {
+    // No(48px) + 제어(80px) + 각 컬럼들의 너비 합
+    let sum = 48 + 80;
+    (parsedData.columns || []).forEach((c) => {
+      sum += columnWidths[c.name] || 150;
+    });
+    (parsedData.computedFields || []).forEach((comp) => {
+      sum += columnWidths[comp.name] || 150;
+    });
+    return sum;
+  }, [parsedData, columnWidths]);
+
   // [Day 35 작업] 실시간 유효성 검증(Validation) 및 레거시 ItemChanged / dw_1.Find() 대치 로직
   /*
    * 파워빌더 레거시 메커니즘 vs 현대 리액트 선언형 아키텍처 비교 설명 (교육용 주석)
@@ -752,7 +844,7 @@ export default function GridPreview({
           </div>
         )}
 
-        <table className="w-full text-left text-xs border-collapse">
+        <table className="text-left text-xs border-collapse table-fixed" style={{ width: `${totalTableWidth}px` }}>
           <thead className="bg-slate-900 text-slate-400 font-bold sticky top-0 border-b border-slate-900 z-10">
             <tr
               style={{
@@ -761,7 +853,7 @@ export default function GridPreview({
                   : "44px",
               }}
             >
-              <th className="p-3 text-center w-12 bg-slate-900">No.</th>
+              <th className="p-3 text-center bg-slate-900" style={{ width: "48px" }}>No.</th>
               {(parsedData.columns || []).map((c, i) => (
                 <th
                   key={i}
@@ -769,9 +861,10 @@ export default function GridPreview({
                   className={`p-3 font-mono text-slate-300 bg-slate-900 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-all border-r border-slate-900/40 relative group ${getAlignClass(
                     c.alignment
                   )}`}
+                  style={{ width: `${columnWidths[c.name] || 150}px` }}
                   title="클릭하여 순환 정렬 (기본값 ➔ 오름차순 ➔ 내림차순)"
                 >
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center justify-between gap-2 mr-2">
                     <span>{c.label || c.name}</span>
                     <span
                       className={`text-[9px] font-bold px-1 py-0.5 rounded transition-all duration-300 ${
@@ -791,15 +884,33 @@ export default function GridPreview({
                         : "-"}
                     </span>
                   </div>
+                  {/* [Day 37 작업] 컬럼 Resizing을 위한 다크 네온 스타일의 리사이저 핸들 포인트 */}
+                  <div
+                    onMouseDown={(e) => handleResizeStart(c.name, e)}
+                    className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                    title="드래그하여 너비 조절"
+                  />
                 </th>
               ))}
               {(parsedData.computedFields || []).map((comp, i) => (
-                <th key={i} className="p-3 text-amber-400 bg-indigo-950/20">
-                  🧮 {comp.label || comp.name}
+                <th
+                  key={i}
+                  className="p-3 text-amber-400 bg-indigo-950/20 relative group select-none"
+                  style={{ width: `${columnWidths[comp.name] || 150}px` }}
+                >
+                  <div className="flex items-center gap-2 mr-2">
+                    <span>🧮 {comp.label || comp.name}</span>
+                  </div>
+                  {/* [Day 37 작업] 계산식 컬럼 Resizing을 위한 다크 네온 스타일의 리사이저 핸들 포인트 */}
+                  <div
+                    onMouseDown={(e) => handleResizeStart(comp.name, e)}
+                    className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                    title="드래그하여 너비 조절"
+                  />
                 </th>
               ))}
               {/* 제어 열 헤더 추가 */}
-              <th className="p-3 text-center w-20 text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900">
+              <th className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900" style={{ width: "80px" }}>
                 제어
               </th>
             </tr>
@@ -852,7 +963,7 @@ export default function GridPreview({
                         : isModified 
                         ? "border-l-4 border-l-emerald-500 bg-emerald-950/20 text-emerald-400 font-bold" 
                         : "text-slate-600"
-                    }`}>
+                    }`} style={{ width: "48px" }}>
                       {fIdx + 1}
                     </td>
                     {(parsedData.columns || []).map((col, cIdx) => {
@@ -1102,7 +1213,7 @@ export default function GridPreview({
                       };
 
                       return (
-                        <td key={cIdx} className="p-1 border-r border-slate-900/40">
+                        <td key={cIdx} className="p-1 border-r border-slate-900/40" style={{ width: `${columnWidths[col.name] || 150}px` }}>
                           {renderGridCellInput()}
                         </td>
                       );
@@ -1128,13 +1239,14 @@ export default function GridPreview({
                             comp.alignment
                           )}`}
                           title={comp.expression}
+                          style={{ width: `${columnWidths[comp.name] || 150}px` }}
                         >
                           {typeof res === "number" ? res.toLocaleString() : res}
                         </td>
                       );
                     })}
                     {/* 행 단위 개별 Undo 버튼 분기 구역 */}
-                    <td className="p-1 border-l border-slate-900/40 text-center w-20">
+                    <td className="p-1 border-l border-slate-900/40 text-center w-20" style={{ width: "80px" }}>
                       {isModified && (
                         <button
                           onClick={() => handleUndoRow(rIdx)}
