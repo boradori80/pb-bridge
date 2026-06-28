@@ -175,6 +175,34 @@ export default function GridPreview({
     return sum;
   }, [parsedData, columnWidths]);
 
+  // [Day 38 작업] 파워빌더 고정 열(Fixed Columns) vs 웹 표준 CSS Sticky 및 React 동적 오프셋 비교 (교육용 주석)
+  /*
+   * 1. 파워빌더 (레거시 C/S 환경):
+   *    - 파워빌더 Grid 스타일 데이터윈도우에서는 사용자가 가로 스크롤(ScrollHorizontal)을 할 때
+   *      특정 컬럼들을 화면 좌측에 항상 고정시키기 위해 데이터윈도우 오브젝트의 HorizontalScrollSplit 속성
+   *      혹은 dw_1.Object.DataWindow.HorizontalScrollSplit API를 설정하여 뷰포트를 좌우 두 개의 레이어로 분할했습니다.
+   *      운영체제 커널의 분할 스크롤 뷰 메커니즘을 이용하므로 렌더링 경계면이 딱딱하고 너비 조정 시 리드로우(Redraw) 부하가 존재했습니다.
+   * 
+   * 2. 현대 웹 표준 브라우저 및 React 선언형 환경:
+   *    - CSS `position: sticky` 속성을 활용하면 복잡한 화면 분할 없이도 스크롤 컨테이너 내에서 특정 요소를 고정 레이어로 띄울 수 있습니다.
+   *    - 하지만 고정된 열이 여러 개일 때, 각각의 열이 고정되어야 할 좌측 오프셋(`left`) 값은 각 컬럼들의 너비에 맞춰 동적으로 계산되어야 합니다.
+   *    - React의 상태로 관리되는 `columnWidths`를 추적하여, 고정할 각 컬럼들의 이전 너비 누적 합산을 구하는 `getFrozenLeftOffset` 함수를 가동합니다.
+   *    - 사용자가 마우스로 드래그하여 임의의 컬럼 너비를 늘리거나 줄이면(Resizing), React의 Reactive 단방향 데이터 흐름에 의해
+   *      누적 오프셋 `left`가 실시간으로 재계산되어 인라인 스타일로 바인딩됩니다.
+   *    - 결과적으로 가로 스크롤 및 마우스 리사이징 중에도 픽셀 오차 없이 부드럽고 완벽하게 컬럼 틀고정 위치가 동기화됩니다.
+   */
+  const getFrozenLeftOffset = React.useCallback((colIndex: number): number => {
+    if (colIndex === -1) return 0; // 'No.' 열은 가장 첫 부분에 고정
+    let offset = 48; // 'No.' 열의 고정 너비 (48px)
+    for (let i = 0; i < colIndex; i++) {
+      const colName = parsedData.columns[i]?.name;
+      if (colName) {
+        offset += columnWidths[colName] || 150;
+      }
+    }
+    return offset;
+  }, [parsedData.columns, columnWidths]);
+
   // [Day 35 작업] 실시간 유효성 검증(Validation) 및 레거시 ItemChanged / dw_1.Find() 대치 로직
   /*
    * 파워빌더 레거시 메커니즘 vs 현대 리액트 선언형 아키텍처 비교 설명 (교육용 주석)
@@ -853,45 +881,62 @@ export default function GridPreview({
                   : "44px",
               }}
             >
-              <th className="p-3 text-center bg-slate-900" style={{ width: "48px" }}>No.</th>
-              {(parsedData.columns || []).map((c, i) => (
-                <th
-                  key={i}
-                  onClick={() => handleSort(c.name)}
-                  className={`p-3 font-mono text-slate-300 bg-slate-900 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-all border-r border-slate-900/40 relative group ${getAlignClass(
-                    c.alignment
-                  )}`}
-                  style={{ width: `${columnWidths[c.name] || 150}px` }}
-                  title="클릭하여 순환 정렬 (기본값 ➔ 오름차순 ➔ 내림차순)"
-                >
-                  <div className="flex items-center justify-between gap-2 mr-2">
-                    <span>{c.label || c.name}</span>
-                    <span
-                      className={`text-[9px] font-bold px-1 py-0.5 rounded transition-all duration-300 ${
-                        sortConfig.key === c.name && sortConfig.direction !== "none"
+              {/* [Day 38 작업] No. 열 sticky 고정 적용 */}
+              <th 
+                className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
+                style={{ width: "48px", left: 0 }}
+              >
+                No.
+              </th>
+              {(parsedData.columns || []).map((c, i) => {
+                const isFrozen = i < 2; // 맨 앞 2개 핵심 컬럼 고정
+                const leftOffset = isFrozen ? getFrozenLeftOffset(i) : undefined;
+                const isLastFrozen = i === 1; // 마지막 고정 열 우측 경계선 처리
+
+                return (
+                  <th
+                    key={i}
+                    onClick={() => handleSort(c.name)}
+                    className={`p-3 font-mono text-slate-300 bg-slate-900 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-all border-r border-slate-900/40 relative group ${getAlignClass(
+                      c.alignment
+                    )} ${isFrozen ? "sticky z-30" : ""} ${
+                      isLastFrozen ? "border-r-2 border-r-indigo-500/80 shadow-[2px_0_5px_rgba(99,102,241,0.3)]" : ""
+                    }`}
+                    style={{ 
+                      width: `${columnWidths[c.name] || 150}px`,
+                      left: leftOffset,
+                    }}
+                    title="클릭하여 순환 정렬 (기본값 ➔ 오름차순 ➔ 내림차순)"
+                  >
+                    <div className="flex items-center justify-between gap-2 mr-2">
+                      <span>{c.label || c.name}</span>
+                      <span
+                        className={`text-[9px] font-bold px-1 py-0.5 rounded transition-all duration-300 ${
+                          sortConfig.key === c.name && sortConfig.direction !== "none"
+                            ? sortConfig.direction === "asc"
+                              ? "text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                              : "text-purple-400 bg-purple-950/40 border border-purple-500/20 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
+                            : "text-slate-600 border border-transparent group-hover:text-slate-400"
+                        }`}
+                      >
+                        {sortConfig.key === c.name
                           ? sortConfig.direction === "asc"
-                            ? "text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
-                            : "text-purple-400 bg-purple-950/40 border border-purple-500/20 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
-                          : "text-slate-600 border border-transparent group-hover:text-slate-400"
-                      }`}
-                    >
-                      {sortConfig.key === c.name
-                        ? sortConfig.direction === "asc"
-                          ? "▲"
-                          : sortConfig.direction === "desc"
-                          ? "▼"
-                          : "-"
-                        : "-"}
-                    </span>
-                  </div>
-                  {/* [Day 37 작업] 컬럼 Resizing을 위한 다크 네온 스타일의 리사이저 핸들 포인트 */}
-                  <div
-                    onMouseDown={(e) => handleResizeStart(c.name, e)}
-                    className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
-                    title="드래그하여 너비 조절"
-                  />
-                </th>
-              ))}
+                            ? "▲"
+                            : sortConfig.direction === "desc"
+                            ? "▼"
+                            : "-"
+                          : "-"}
+                      </span>
+                    </div>
+                    {/* [Day 37 작업] 컬럼 Resizing을 위한 다크 네온 스타일의 리사이저 핸들 포인트 */}
+                    <div
+                      onMouseDown={(e) => handleResizeStart(c.name, e)}
+                      className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                      title="드래그하여 너비 조절"
+                    />
+                  </th>
+                );
+              })}
               {(parsedData.computedFields || []).map((comp, i) => (
                 <th
                   key={i}
@@ -946,26 +991,43 @@ export default function GridPreview({
                   rowBgClass = "hover:bg-slate-800/40";
                 }
 
-                return (
-                  <tr
-                    key={rIdx}
-                    style={{
-                      height: parsedData?.bands?.detail
-                        ? `${parsedData.bands.detail / 2}px`
-                        : "40px",
-                    }}
-                    onClick={() => onSelectRow(rIdx)}
-                    className={`transition-all font-mono cursor-pointer ${rowBgClass}`}
-                  >
-                    <td className={`p-3 text-center transition-all ${
-                      hasError
-                        ? "border-l-4 border-l-red-500 bg-red-950/30 text-red-400 font-bold"
-                        : isModified 
-                        ? "border-l-4 border-l-emerald-500 bg-emerald-950/20 text-emerald-400 font-bold" 
-                        : "text-slate-600"
-                    }`} style={{ width: "48px" }}>
-                      {fIdx + 1}
-                    </td>
+                  // [Day 38 작업] 고정 셀들의 불투명 배경색 지정 및 호버 대응
+                  let cellBgClass = "bg-[#090e1c] group-hover:bg-[#11192e]";
+                  if (hasError) {
+                    cellBgClass = "bg-[#251016] group-hover:bg-[#341820]";
+                  } else if (isSelected) {
+                    cellBgClass = "bg-[#141b38] group-hover:bg-[#1b2447]";
+                  } else if (isModified) {
+                    cellBgClass = "bg-[#0c201d] group-hover:bg-[#122e2a]";
+                  }
+
+                  return (
+                    <tr
+                      key={rIdx}
+                      style={{
+                        height: parsedData?.bands?.detail
+                          ? `${parsedData.bands.detail / 2}px`
+                          : "40px",
+                      }}
+                      onClick={() => onSelectRow(rIdx)}
+                      className={`transition-all font-mono cursor-pointer group ${rowBgClass}`}
+                    >
+                      {/* [Day 38 작업] No. 열 sticky 고정 적용 및 오프셋 스타일 바인딩 */}
+                      <td 
+                        className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${cellBgClass} ${
+                          hasError
+                            ? "border-l-4 border-l-red-500 text-red-400 font-bold"
+                            : isModified 
+                            ? "border-l-4 border-l-emerald-500 text-emerald-400 font-bold" 
+                            : "text-slate-600"
+                        }`} 
+                        style={{ 
+                          width: "48px",
+                          left: 0,
+                        }}
+                      >
+                        {fIdx + 1}
+                      </td>
                     {(parsedData.columns || []).map((col, cIdx) => {
                       let isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
                       
@@ -981,6 +1043,11 @@ export default function GridPreview({
 
                       const cellAlignClass = getAlignClass(col.alignment);
                       const colType = (col.type || "").toLowerCase();
+
+                      // [Day 38 작업] 0, 1번째 핵심 데이터 컬럼 sticky 고정 연동
+                      const isFrozen = cIdx < 2;
+                      const leftOffset = isFrozen ? getFrozenLeftOffset(cIdx) : undefined;
+                      const isLastFrozen = cIdx === 1;
 
                       const renderGridCellInput = () => {
                         const baseClass =
@@ -1213,7 +1280,18 @@ export default function GridPreview({
                       };
 
                       return (
-                        <td key={cIdx} className="p-1 border-r border-slate-900/40" style={{ width: `${columnWidths[col.name] || 150}px` }}>
+                        <td 
+                          key={cIdx} 
+                          className={`p-1 border-r border-slate-900/40 ${
+                            isFrozen ? `sticky z-10 ${cellBgClass}` : ""
+                          } ${
+                            isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""
+                          }`} 
+                          style={{ 
+                            width: `${columnWidths[col.name] || 150}px`,
+                            left: leftOffset,
+                          }}
+                        >
                           {renderGridCellInput()}
                         </td>
                       );
