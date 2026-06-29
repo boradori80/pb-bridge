@@ -42,6 +42,46 @@ const MOCK_MASTER_DATA = [
   { id: "1010", region: "개발팀", rep: "백엔드", sales: "160000", status: "Open", name: "백엔드", emp_id: "1010", dept: "개발팀" }
 ];
 
+// [Day 39 작업] 마스터-디테일 연동을 위한 상세 가족/인사 데이터셋 구조 및 Mock 데이터 정의
+interface DetailRow {
+  emp_id: string;
+  seq: string;
+  relation: string;
+  name: string;
+  birth: string;
+  note: string;
+  row_status?: "New" | "NewModified" | "Unchanged";
+}
+
+const MOCK_DETAIL_DATA: { [empId: string]: DetailRow[] } = {
+  "1001": [
+    { emp_id: "1001", seq: "1", relation: "배우자", name: "한가인", birth: "1982-02-02", note: "배우자 정보", row_status: "Unchanged" },
+    { emp_id: "1001", seq: "2", relation: "자녀", name: "김아이", birth: "2015-05-05", note: "초등학생", row_status: "Unchanged" }
+  ],
+  "1002": [
+    { emp_id: "1002", seq: "1", relation: "배우자", name: "손예진", birth: "1982-01-11", note: "결혼기념일 03-31", row_status: "Unchanged" }
+  ],
+  "1003": [
+    { emp_id: "1003", seq: "1", relation: "부", name: "박부친", birth: "1955-08-15", note: "동거", row_status: "Unchanged" },
+    { emp_id: "1003", seq: "2", relation: "모", name: "최모친", birth: "1958-09-20", note: "동거", row_status: "Unchanged" }
+  ],
+  "1004": [
+    { emp_id: "1004", seq: "1", relation: "배우자", name: "김태희", birth: "1980-03-29", note: "특이사항 없음", row_status: "Unchanged" }
+  ],
+  "1005": [
+    { emp_id: "1005", seq: "1", relation: "자녀", name: "정자녀", birth: "2018-10-10", note: "유치원생", row_status: "Unchanged" }
+  ],
+  "1006": [],
+  "1007": [
+    { emp_id: "1007", seq: "1", relation: "배우자", name: "신민아", birth: "1984-04-05", note: "회사원", row_status: "Unchanged" }
+  ],
+  "1008": [],
+  "1009": [
+    { emp_id: "1009", seq: "1", relation: "자녀", name: "황아들", birth: "2012-12-12", note: "중학생", row_status: "Unchanged" }
+  ],
+  "1010": []
+};
+
 export default function GridPreview({
   parsedData,
   gridData,
@@ -57,6 +97,28 @@ export default function GridPreview({
     data: { [key: string]: string };
   }
   const [deleteBuffer, setDeleteBuffer] = React.useState<DeletedRowInfo[]>([]);
+
+  // [Day 39 작업] 디테일 뷰포트 상태 및 삭제 버퍼 선언
+  const [detailData, setDetailData] = React.useState<{ [empId: string]: DetailRow[] }>(() => {
+    return JSON.parse(JSON.stringify(MOCK_DETAIL_DATA));
+  });
+
+  interface DeletedDetailRowInfo {
+    emp_id: string;
+    seq: string;
+    data: DetailRow;
+  }
+  const [detailDeleteBuffer, setDetailDeleteBuffer] = React.useState<DeletedDetailRowInfo[]>([]);
+  const [selectedDetailRowIndex, setSelectedDetailRowIndex] = React.useState<number>(0);
+
+  // [Day 39 작업] 마스터의 고유 ID 식별자 추출
+  const currentMasterRow = gridData[selectedRowIndex];
+  const currentEmpId = currentMasterRow ? (currentMasterRow.emp_id || currentMasterRow.id || "") : "";
+
+  // [Day 39 작업] 마스터 선택 행 변경 시 디테일 뷰 연동을 위한 선택 초기화 훅
+  React.useEffect(() => {
+    setSelectedDetailRowIndex(0);
+  }, [selectedRowIndex]);
 
   // [Day 32 작업] 동적 조회(Retrieve) 및 필터링 관련 React 로컬 상태 관리
   const [selectedDept, setSelectedDept] = React.useState<string>("전체");
@@ -77,6 +139,11 @@ export default function GridPreview({
   const snapshotRef = React.useRef<Array<{ [key: string]: string }>>([]);
   const initialGridDataRef = React.useRef<Array<{ [key: string]: string }>>([]);
   const prevParsedDataRef = React.useRef<any>(null);
+
+  // [Day 39 작업] 초기 detailData 백업 및 비교를 위한 레퍼런스
+  const initialDetailDataRef = React.useRef<{ [empId: string]: DetailRow[] }>(
+    JSON.parse(JSON.stringify(MOCK_DETAIL_DATA))
+  );
 
   // [Day 29 작업] 추출된 JSON 마스터 패킷 저장용 상태
   const [dumpOutput, setDumpOutput] = React.useState<string | null>(null);
@@ -381,6 +448,12 @@ export default function GridPreview({
       // [Day 36 작업] 신규 조회 시 기존의 삭제 트랜잭션 버퍼 일괄 초기화
       setDeleteBuffer([]);
 
+      // [Day 39 작업] 신규 조회 시 디테일 버퍼 및 변경사항 일괄 초기화
+      setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
+      setDetailDeleteBuffer([]);
+      setSelectedDetailRowIndex(0);
+      initialDetailDataRef.current = JSON.parse(JSON.stringify(MOCK_DETAIL_DATA));
+
       setGridData(updatedRows);
       setIsLoading(false);
       onSelectRow(0); // 첫 번째 행 자동 선택
@@ -509,6 +582,12 @@ export default function GridPreview({
       setDeleteBuffer([]);
       // 비교용 reference 데이터 또한 초기 원본 상태로 동기화하여 변경 감지 카운터를 리셋합니다.
       initialGridDataRef.current = JSON.parse(JSON.stringify(snapshotRef.current));
+
+      // [Day 39 작업] 전체 초기화 시 디테일 상태도 초기 원본 상태로 롤백
+      setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
+      setDetailDeleteBuffer([]);
+      setSelectedDetailRowIndex(0);
+      initialDetailDataRef.current = JSON.parse(JSON.stringify(MOCK_DETAIL_DATA));
     }
   };
 
@@ -624,7 +703,115 @@ export default function GridPreview({
     });
   };
 
-  // [Day 29 작업] 데이터 추출 핸들러 및 파워빌더 dw_1.Update() 메커니즘 연동
+  // [Day 39 작업] 파워빌더 RowFocusChanged / ShareData 대치 설명 및 연동 상태 제어
+  /*
+   * 파워빌더 레거시 RowFocusChanged & ShareData vs 현대 웹 React 선언형 상태 매핑 비교 (교육용 주석)
+   *
+   * 1. 파워빌더 (레거시 C/S 아키텍처):
+   *    - 파워빌더에서는 dw_master의 RowFocusChanged 이벤트가 발생할 때, 현재 선택된 행의 Key(예: emp_id)를 읽어
+   *      dw_detail.Retrieve(ll_id)를 호출하여 데이터베이스로부터 상세 테이블을 매번 조회했습니다.
+   *    - 혹은 메모리 상의 공유 버퍼를 사용하기 위해 dw_master.ShareData(dw_detail)을 선언하여
+   *      동일한 데이터 소스를 필터링 규칙만 달리하여 마스터와 디테일 뷰포트에 각각 분리 매핑했습니다.
+   *    - 이 방식은 명령형(Imperative) 흐름을 따라 개발자가 명시적으로 이벤트를 잡아서 UI 컴포넌트의 API를 직접 제어해야 했으므로,
+   *      상태 변화의 시점이나 버퍼의 동기화 실수가 발생할 여지가 높았습니다.
+   *
+   * 2. 현대 웹 React 아키텍처 (선언형/Reactive 아키텍처):
+   *    - React 환경에서는 상태(State)의 선언적 흐름을 따릅니다.
+   *      부모 컴포넌트나 상위 상태에 존재하는 `selectedRowIndex` 상태값이 키보드/마우스 동작으로 변화되면,
+   *      이를 감지하여 렌더링 파이프라인에서 자동으로 마스터의 ID(`currentEmpId`)에 해당하는 디테일 데이터(`detailData[currentEmpId]`)를 매핑합니다.
+   *      즉, 리액트에서는 상태 변화에 따른 하위 상태 필터링 연산 및 계층 구조 불변성 객체 그래프(State Graph) 제어 기술로 완벽히 상호 대치됩니다.
+   *    - 개발자가 "선택된 행이 바뀌었으니 디테일 뷰를 갱신하라"고 dw_detail.Retrieve()처럼 명령할 필요 없이,
+   *      단지 "현재 디테일 뷰는 currentEmpId에 종속된 detailData 상태를 그린다"라고 선언해 두면 리액트 엔진이 알아서 화면을 동기화합니다.
+   *    - 또한 디테일 버퍼의 데이터 수정 내역도 React의 단방향 데이터 흐름을 따르므로 상태 복사를 통해 불변성이 유지되며,
+   *      최종 저장 버튼 시점에 전체 계층 그래프(State Graph)를 조립하는 것으로 마스터와 디테일의 상태가 무결하게 통합됩니다.
+   */
+
+  // [Day 39 작업] 디테일 데이터 행 추가 (dw_detail.InsertRow)
+  const handleInsertDetailRow = () => {
+    if (!currentEmpId) return;
+
+    const currentDetails = detailData[currentEmpId] || [];
+    const maxSeq = currentDetails.reduce((max, r) => {
+      const seqNum = parseInt(r.seq || "0", 10);
+      return seqNum > max ? seqNum : max;
+    }, 0);
+
+    const newDetailRow: DetailRow = {
+      emp_id: currentEmpId,
+      seq: String(maxSeq + 1),
+      relation: "",
+      name: "",
+      birth: "",
+      note: "",
+      row_status: "New"
+    };
+
+    setDetailData((prev) => ({
+      ...prev,
+      [currentEmpId]: [...currentDetails, newDetailRow]
+    }));
+
+    setTimeout(() => {
+      setSelectedDetailRowIndex(currentDetails.length);
+    }, 0);
+  };
+
+  // [Day 39 작업] 디테일 데이터 행 삭제 (dw_detail.DeleteRow)
+  const handleDeleteDetailRow = () => {
+    if (!currentEmpId) return;
+    const currentDetails = detailData[currentEmpId] || [];
+    if (selectedDetailRowIndex < 0 || selectedDetailRowIndex >= currentDetails.length) return;
+
+    const rowToDelete = currentDetails[selectedDetailRowIndex];
+
+    // 기존에 DB/Mock에 존재하던 데이터만 삭제 버퍼에 추가
+    if (rowToDelete.row_status !== "New" && rowToDelete.row_status !== "NewModified") {
+      const deletedItem: DeletedDetailRowInfo = {
+        emp_id: currentEmpId,
+        seq: rowToDelete.seq,
+        data: rowToDelete
+      };
+      setDetailDeleteBuffer((prev) => [...prev, deletedItem]);
+    }
+
+    const updatedDetails = currentDetails.filter((_, idx) => idx !== selectedDetailRowIndex);
+    setDetailData((prev) => ({
+      ...prev,
+      [currentEmpId]: updatedDetails
+    }));
+
+    if (updatedDetails.length > 0) {
+      const nextSelectIdx = selectedDetailRowIndex >= updatedDetails.length ? updatedDetails.length - 1 : selectedDetailRowIndex;
+      setSelectedDetailRowIndex(nextSelectIdx);
+    } else {
+      setSelectedDetailRowIndex(-1);
+    }
+  };
+
+  // [Day 39 작업] 디테일 셀 변경 제어 핸들러 (dw_detail.ItemChanged)
+  const handleDetailCellChange = (seq: string, fieldName: keyof DetailRow, value: string) => {
+    if (!currentEmpId) return;
+    const currentDetails = detailData[currentEmpId] || [];
+
+    const updatedDetails = currentDetails.map((row) => {
+      if (row.seq === seq) {
+        const nextStatus = row.row_status === "New" ? "NewModified" : row.row_status;
+        return {
+          ...row,
+          [fieldName]: value,
+          row_status: nextStatus
+        };
+      }
+      return row;
+    });
+
+    setDetailData((prev) => ({
+      ...prev,
+      [currentEmpId]: updatedDetails
+    }));
+  };
+
+  // [Day 39 작업] 마스터-디테일 계층형 트랜잭션 빌더 (dw_master & dw_detail Update)
   const handleSaveAndExtract = () => {
     // [Day 35 작업] 저장 및 추출 시점에 최종적으로 에러 상태를 점검하여 추출을 제한합니다.
     const errorKeys = Object.keys(validationErrors);
@@ -636,46 +823,117 @@ export default function GridPreview({
       return;
     }
 
-    // [Day 36 작업] 3대 트랜잭션 버퍼(Inserted / Updated / Deleted)를 취합하는 JSON 마스터 패킷 생성 알고리즘
-    const changePacket: Array<{
-      row_no: number;
-      row_status: "Inserted" | "Updated" | "Deleted";
-      data: { [key: string]: string };
-    }> = [];
+    const hierarchyPacket: any[] = [];
 
-    // 1. 뷰포트 내 행 데이터 탐색 (Inserted, Updated 수집)
-    gridData.forEach((row, rIdx) => {
-      const { __originalIndex, row_status, ...cleanRow } = row;
+    // 1. 마스터 데이터 기준 스캔
+    gridData.forEach((masterRow, rIdx) => {
+      const masterEmpId = masterRow.emp_id || masterRow.id || "";
+      const { __originalIndex, row_status, ...cleanMasterRow } = masterRow;
+      
+      const isMasterMod = isRowModified(masterRow, rIdx);
+      const isNewMasterMod = masterRow.row_status === "NewModified";
 
-      if (row.row_status === "NewModified") {
-        // 행 추가 후 내용이 입력된 신규 인서트 건
-        changePacket.push({
-          row_no: rIdx + 1,
-          row_status: "Inserted",
-          data: cleanRow,
-        });
-      } else if (row.row_status !== "New") {
-        // 기존 조회 행 중 수정 여부 판독
-        if (isRowModified(row, rIdx)) {
-          changePacket.push({
-            row_no: rIdx + 1,
+      // 디테일 변경사항(추가, 수정, 삭제) 수집
+      const currentDetails = detailData[masterEmpId] || [];
+      const initialDetails = initialDetailDataRef.current[masterEmpId] || [];
+      const detailChanges: any[] = [];
+
+      // 추가 및 수정된 디테일 감지
+      currentDetails.forEach((detRow) => {
+        const isNewDet = detRow.row_status === "NewModified";
+        const origDet = initialDetails.find((d) => d.seq === detRow.seq);
+        const isDetMod = origDet ? (
+          origDet.relation !== detRow.relation ||
+          origDet.name !== detRow.name ||
+          origDet.birth !== detRow.birth ||
+          origDet.note !== detRow.note
+        ) : false;
+
+        if (detRow.row_status === "New" || isNewDet) {
+          detailChanges.push({
+            seq: detRow.seq,
+            row_status: "Inserted",
+            data: {
+              relation: detRow.relation,
+              name: detRow.name,
+              birth: detRow.birth,
+              note: detRow.note
+            }
+          });
+        } else if (isDetMod) {
+          detailChanges.push({
+            seq: detRow.seq,
             row_status: "Updated",
-            data: cleanRow,
+            data: {
+              relation: detRow.relation,
+              name: detRow.name,
+              birth: detRow.birth,
+              note: detRow.note
+            }
           });
         }
+      });
+
+      // 삭제된 디테일 감지 (현재 마스터에 종속된 것만 수집)
+      const masterDeletedDetails = detailDeleteBuffer.filter((del) => del.emp_id === masterEmpId);
+      masterDeletedDetails.forEach((delItem) => {
+        detailChanges.push({
+          seq: delItem.seq,
+          row_status: "Deleted",
+          data: {
+            relation: delItem.data.relation,
+            name: delItem.data.name,
+            birth: delItem.data.birth,
+            note: delItem.data.note
+          }
+        });
+      });
+
+      // 마스터가 변경되었거나, 디테일이 변경된 경우 계층형 패킷에 추가
+      if (isNewMasterMod || isMasterMod || masterRow.row_status === "New" || detailChanges.length > 0) {
+        let currentStatus: "Inserted" | "Updated" | "Unchanged" = "Unchanged";
+        if (isNewMasterMod || masterRow.row_status === "New") {
+          currentStatus = "Inserted";
+        } else if (isMasterMod) {
+          currentStatus = "Updated";
+        }
+
+        hierarchyPacket.push({
+          row_no: rIdx + 1,
+          emp_id: masterEmpId,
+          row_status: currentStatus,
+          data: cleanMasterRow,
+          details: detailChanges
+        });
       }
     });
 
-    // 2. 삭제 버퍼 내 행 추가 (Deleted 수집)
-    deleteBuffer.forEach((deletedItem) => {
-      changePacket.push({
-        row_no: deletedItem.row_no,
+    // 2. 삭제된 마스터들에 대해 수집
+    deleteBuffer.forEach((deletedMaster) => {
+      const deletedMasterEmpId = deletedMaster.data.emp_id || deletedMaster.data.id || "";
+      // 삭제된 마스터에 종속되어 삭제된 디테일이 있다면 함께 수집
+      const masterDeletedDetails = detailDeleteBuffer.filter((del) => del.emp_id === deletedMasterEmpId);
+      const detailChanges = masterDeletedDetails.map(delItem => ({
+        seq: delItem.seq,
         row_status: "Deleted",
-        data: deletedItem.data,
+        data: {
+          relation: delItem.data.relation,
+          name: delItem.data.name,
+          birth: delItem.data.birth,
+          note: delItem.data.note
+        }
+      }));
+
+      hierarchyPacket.push({
+        row_no: deletedMaster.row_no,
+        emp_id: deletedMasterEmpId,
+        row_status: "Deleted",
+        data: deletedMaster.data,
+        details: detailChanges
       });
     });
 
-    if (changePacket.length === 0) {
+    if (hierarchyPacket.length === 0) {
       setDumpOutput(
         JSON.stringify(
           {
@@ -689,7 +947,7 @@ export default function GridPreview({
       );
     } else {
       // 행 번호(row_no) 기준으로 정렬하여 가독성 높은 순차 구조로 덤프 출력
-      const sortedPacket = [...changePacket].sort((a, b) => a.row_no - b.row_no);
+      const sortedPacket = [...hierarchyPacket].sort((a, b) => a.row_no - b.row_no);
       setDumpOutput(JSON.stringify(sortedPacket, null, 2));
     }
   };
@@ -1341,6 +1599,135 @@ export default function GridPreview({
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* [Day 39 작업] 다크 네온 스타일 [상세 내역 (Detail View)] 서브 뷰포트 레이아웃 */}
+      <div className="mt-4 p-5 bg-slate-950/90 border border-pink-950/60 rounded-2xl shadow-2xl relative overflow-hidden flex flex-col gap-3">
+        {/* 다크 네온 핑크 장식 효과 */}
+        <div className="absolute -top-10 -right-10 w-24 h-24 bg-pink-500/5 rounded-full blur-2xl pointer-events-none"></div>
+        
+        <div className="flex items-center justify-between border-b border-pink-900/20 pb-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span>
+            <h4 className="text-xs font-bold text-pink-400 font-mono tracking-wide">
+              [상세 내역 (Detail View) - 사원번호: {currentEmpId || "선택 없음"}]
+            </h4>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleInsertDetailRow}
+              disabled={!currentEmpId}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold border transition-all ${
+                currentEmpId
+                  ? "border-pink-500/30 bg-pink-950/80 text-pink-400 hover:bg-pink-900/50 hover:text-pink-300 hover:shadow-[0_0_8px_rgba(244,63,94,0.4)] cursor-pointer"
+                  : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
+              }`}
+              title="현재 마스터에 예속된 새로운 상세 데이터 행을 추가합니다 (dw_detail.InsertRow)."
+            >
+              상세 추가 ➕
+            </button>
+            <button
+              onClick={handleDeleteDetailRow}
+              disabled={!currentEmpId || !detailData[currentEmpId] || detailData[currentEmpId].length === 0 || selectedDetailRowIndex < 0 || selectedDetailRowIndex >= (detailData[currentEmpId]?.length || 0)}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-bold border transition-all ${
+                currentEmpId && detailData[currentEmpId] && detailData[currentEmpId].length > 0 && selectedDetailRowIndex >= 0 && selectedDetailRowIndex < detailData[currentEmpId].length
+                  ? "border-purple-500/30 bg-purple-950/80 text-purple-400 hover:bg-purple-900/50 hover:text-purple-300 hover:shadow-[0_0_8px_rgba(168,85,247,0.4)] cursor-pointer"
+                  : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
+              }`}
+              title="선택된 상세 데이터를 삭제합니다 (dw_detail.DeleteRow)."
+            >
+              상세 삭제 ➖
+            </button>
+          </div>
+        </div>
+
+        {/* 디테일 테이블 */}
+        <div className="overflow-x-auto overflow-y-auto border border-pink-950/30 rounded-xl max-h-[200px] scrollbar-thin">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead className="bg-[#120712] text-pink-500 font-bold sticky top-0 border-b border-pink-950/40 z-10">
+              <tr>
+                <th className="p-2.5 text-center font-mono" style={{ width: "80px" }}>일련번호</th>
+                <th className="p-2.5 font-mono">관계</th>
+                <th className="p-2.5 font-mono">이름</th>
+                <th className="p-2.5 font-mono">생년월일</th>
+                <th className="p-2.5 font-mono">비고</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-pink-950/20 text-slate-300 bg-slate-950/40">
+              {!currentEmpId ? (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-slate-500 italic">
+                    마스터 그리드에서 직원을 선택해 주십시오.
+                  </td>
+                </tr>
+              ) : !detailData[currentEmpId] || detailData[currentEmpId].length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-slate-500 italic">
+                    등록된 상세 내역이 없습니다. [상세 추가] 버튼으로 등록해 주십시오.
+                  </td>
+                </tr>
+              ) : (
+                detailData[currentEmpId].map((detRow, dIdx) => {
+                  const isDetSelected = selectedDetailRowIndex === dIdx;
+                  const detRowBg = isDetSelected 
+                    ? "bg-pink-600/10 border-y border-pink-500/20 font-bold" 
+                    : "hover:bg-pink-950/5";
+
+                  return (
+                    <tr
+                      key={detRow.seq}
+                      onClick={() => setSelectedDetailRowIndex(dIdx)}
+                      className={`transition-all font-mono cursor-pointer ${detRowBg}`}
+                    >
+                      <td className="p-2 text-center text-pink-400/80 font-bold" style={{ width: "80px" }}>{detRow.seq}</td>
+                      <td className="p-1">
+                        <input
+                          type="text"
+                          value={detRow.relation}
+                          onChange={(e) => handleDetailCellChange(detRow.seq, "relation", e.target.value)}
+                          className="w-full bg-transparent px-2 py-1 text-xs border-0 text-white focus:outline-none focus:ring-1 focus:ring-pink-500 rounded"
+                          placeholder="예: 배우자, 자녀"
+                        />
+                      </td>
+                      <td className="p-1">
+                        <input
+                          type="text"
+                          value={detRow.name}
+                          onChange={(e) => handleDetailCellChange(detRow.seq, "name", e.target.value)}
+                          className="w-full bg-transparent px-2 py-1 text-xs border-0 text-white focus:outline-none focus:ring-1 focus:ring-pink-500 rounded"
+                          placeholder="이름 입력"
+                        />
+                      </td>
+                      <td className="p-1">
+                        <input
+                          type="date"
+                          value={detRow.birth}
+                          onChange={(e) => handleDetailCellChange(detRow.seq, "birth", e.target.value)}
+                          onClick={(e) => {
+                            try { e.currentTarget.showPicker(); } catch (err) {}
+                          }}
+                          onFocus={(e) => {
+                            try { e.currentTarget.showPicker(); } catch (err) {}
+                          }}
+                          className="w-full bg-transparent px-2 py-1 text-xs border-0 text-white focus:outline-none focus:ring-1 focus:ring-pink-500 rounded"
+                        />
+                      </td>
+                      <td className="p-1">
+                        <input
+                          type="text"
+                          value={detRow.note}
+                          onChange={(e) => handleDetailCellChange(detRow.seq, "note", e.target.value)}
+                          className="w-full bg-transparent px-2 py-1 text-xs border-0 text-white focus:outline-none focus:ring-1 focus:ring-pink-500 rounded"
+                          placeholder="비고 입력"
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* TRANSACTION DATA DUMP 로그 터미널 레이어 */}
