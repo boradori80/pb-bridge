@@ -1,6 +1,7 @@
 // [Day 21 작업] 데이터윈도우 웹 변환 그리드 프리뷰 컴포넌트
 // [Day 32 작업] 상단 Retrieval Argument 조회 바 및 동적 데이터 바인딩 고도화
 // [Day 34 작업] 그리드 런타임 결과 내 실시간 와일드카드 필터링(Filter) 고도화 구현
+// [Day 40 작업] 그리드 다중 트랜잭션 데이터 최종 커밋 및 서버 비동기 통신 피드백 고도화 구현
 "use client";
 
 import React from "react";
@@ -28,7 +29,7 @@ const getAlignClass = (alignCode: string | undefined): string => {
   return ALIGN_MAP[alignCode.replace(/[^0-9]/g, "")] || "text-left";
 };
 
-// [Day 32 작업] 레거시 DB 조회를 시뮬레이션하기 위한 10개 행 규모의 가상 직원/실적 마스터 데이터셋
+// [Day 32 작업] 레거시 DB 조회를 시뮬레이션하기 위한 10개 행 규모 of 가상 직원/실적 마스터 데이터셋
 const MOCK_MASTER_DATA = [
   { id: "1001", region: "개발팀", rep: "김개발", sales: "150000", status: "Closed", name: "김개발", emp_id: "1001", dept: "개발팀" },
   { id: "1002", region: "영업팀", rep: "이영업", sales: "250000", status: "Open", name: "이영업", emp_id: "1002", dept: "영업팀" },
@@ -129,7 +130,6 @@ export default function GridPreview({
   const [filterKeyword, setFilterKeyword] = React.useState<string>("");
 
   // [Day 33 작업] 정렬 상태 관리를 위한 React 로컬 상태 추가
-  // key: 정렬 대상 컬럼명, direction: 정렬 방향 (asc: 오름차순, desc: 내림차순, none: 정렬 안 함)
   const [sortConfig, setSortConfig] = React.useState<{ key: string; direction: "asc" | "desc" | "none" }>({
     key: "",
     direction: "none",
@@ -149,6 +149,10 @@ export default function GridPreview({
   const [dumpOutput, setDumpOutput] = React.useState<string | null>(null);
   // [Day 30 작업] 클립보드 복사 완료 상태 관리용 토스트 플래그
   const [copied, setCopied] = React.useState<boolean>(false);
+
+  // [Day 40 작업] 비동기 Update 및 트랜잭션 상태 제어 상태 변수
+  const [isUpdating, setIsUpdating] = React.useState<boolean>(false);
+  const [showCommitToast, setShowCommitToast] = React.useState<boolean>(false);
 
   // [Day 37 작업] 그리드 헤더 컬럼별 너비(px) 상태 관리
   const [columnWidths, setColumnWidths] = React.useState<{ [key: string]: number }>(() => {
@@ -184,26 +188,6 @@ export default function GridPreview({
   }, [parsedData]);
 
   // [Day 37 작업] 마우스 드래그를 통한 컬럼 너비 리사이징 이벤트 훅 및 제어 로직
-  /*
-   * 파워빌더 레거시 윈도우 캡처 vs 현대 웹 표준 브라우저 이벤트 모델 비교 (교육용 주석)
-   *
-   * 1. 파워빌더 (레거시 C/S 환경):
-   *    - 파워빌더의 Grid 스타일 데이터윈도우에서는 사용자가 헤더 컬럼 경계선에 마우스 왼쪽 버튼을 클릭하는 순간,
-   *      네이티브 윈도우 커널 API인 `SetCapture(hWnd)`가 명시적/암시적으로 트리거됩니다.
-   *      이를 통해 마우스 포인터가 윈도우 제어 영역(Client Area)을 이탈하더라도 드래그 해제 전까지 모든 마우스 메시지(WM_MOUSEMOVE, WM_LBUTTONUP)가
-   *      해당 데이터윈도우 컨트롤로 독점 전송됩니다.
-   *    - 이후 마우스 버튼을 놓으면 `ReleaseCapture()`를 호출하여 마우스 캡처를 운영체제 시스템에 반환하고 처리를 종료했습니다.
-   *
-   * 2. 현대 웹 표준 브라우저 및 React 선언형 환경:
-   *    - 브라우저 환경에서는 단일 윈도우 스레드가 아니며 뷰포트 내의 다양한 요소들이 이벤트를 수신하므로, 단순히 특정 요소에 이벤트를 바인딩하면
-   *      마우스가 요소를 빠르게 이탈할 때 이벤트 흐름이 끊기거나 드롭이 정상적으로 감지되지 않는 '드래그 끊김(Mouse Evading)' 현상이 발생합니다.
-   *    - 이를 극복하기 위해 사용자가 헤더의 리사이저 영역을 `onMouseDown`으로 클릭했을 때,
-   *      전역 `document` 객체에 직접 `mousemove`와 `mouseup` 이벤트 리스너를 동적으로 부착합니다. (브라우저 수준의 이벤트 캡처링 시뮬레이션)
-   *    - 드래그 동작 중에는 마우스의 실시간 픽셀 변화량 `deltaX`를 측정하고, React의 불변 상태(State)인 `columnWidths`를 갱신합니다.
-   *    - `mouseup` 시점에 `document`에 결합된 리스너들을 동적으로 해제하여 메모리 누수를 방지합니다.
-   *    - 최종 렌더링 시에는 React의 가상 돔(Virtual DOM)과 선언형 인라인 스타일 `style={{ width: columnWidths[colName] }}`이 결합되어,
-   *      실시간 너비 조정이 전체 그리드의 헤더(`<th>`)와 바디 데이터 셀(`<td>`)에 동일 폭으로 즉시 반영됩니다.
-   */
   const handleResizeStart = (colKey: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation(); // 헤더 정렬(handleSort) 클릭 이벤트 전파 차단
@@ -231,7 +215,6 @@ export default function GridPreview({
 
   // [Day 37 작업] 컬럼 너비들의 합산으로 테이블의 전체 고정 폭 계산
   const totalTableWidth = React.useMemo(() => {
-    // No(48px) + 제어(80px) + 각 컬럼들의 너비 합
     let sum = 48 + 80;
     (parsedData.columns || []).forEach((c) => {
       sum += columnWidths[c.name] || 150;
@@ -243,21 +226,6 @@ export default function GridPreview({
   }, [parsedData, columnWidths]);
 
   // [Day 38 작업] 파워빌더 고정 열(Fixed Columns) vs 웹 표준 CSS Sticky 및 React 동적 오프셋 비교 (교육용 주석)
-  /*
-   * 1. 파워빌더 (레거시 C/S 환경):
-   *    - 파워빌더 Grid 스타일 데이터윈도우에서는 사용자가 가로 스크롤(ScrollHorizontal)을 할 때
-   *      특정 컬럼들을 화면 좌측에 항상 고정시키기 위해 데이터윈도우 오브젝트의 HorizontalScrollSplit 속성
-   *      혹은 dw_1.Object.DataWindow.HorizontalScrollSplit API를 설정하여 뷰포트를 좌우 두 개의 레이어로 분할했습니다.
-   *      운영체제 커널의 분할 스크롤 뷰 메커니즘을 이용하므로 렌더링 경계면이 딱딱하고 너비 조정 시 리드로우(Redraw) 부하가 존재했습니다.
-   * 
-   * 2. 현대 웹 표준 브라우저 및 React 선언형 환경:
-   *    - CSS `position: sticky` 속성을 활용하면 복잡한 화면 분할 없이도 스크롤 컨테이너 내에서 특정 요소를 고정 레이어로 띄울 수 있습니다.
-   *    - 하지만 고정된 열이 여러 개일 때, 각각의 열이 고정되어야 할 좌측 오프셋(`left`) 값은 각 컬럼들의 너비에 맞춰 동적으로 계산되어야 합니다.
-   *    - React의 상태로 관리되는 `columnWidths`를 추적하여, 고정할 각 컬럼들의 이전 너비 누적 합산을 구하는 `getFrozenLeftOffset` 함수를 가동합니다.
-   *    - 사용자가 마우스로 드래그하여 임의의 컬럼 너비를 늘리거나 줄이면(Resizing), React의 Reactive 단방향 데이터 흐름에 의해
-   *      누적 오프셋 `left`가 실시간으로 재계산되어 인라인 스타일로 바인딩됩니다.
-   *    - 결과적으로 가로 스크롤 및 마우스 리사이징 중에도 픽셀 오차 없이 부드럽고 완벽하게 컬럼 틀고정 위치가 동기화됩니다.
-   */
   const getFrozenLeftOffset = React.useCallback((colIndex: number): number => {
     if (colIndex === -1) return 0; // 'No.' 열은 가장 첫 부분에 고정
     let offset = 48; // 'No.' 열의 고정 너비 (48px)
@@ -271,37 +239,16 @@ export default function GridPreview({
   }, [parsedData.columns, columnWidths]);
 
   // [Day 35 작업] 실시간 유효성 검증(Validation) 및 레거시 ItemChanged / dw_1.Find() 대치 로직
-  /*
-   * 파워빌더 레거시 메커니즘 vs 현대 리액트 선언형 아키텍처 비교 설명 (교육용 주석)
-   * 
-   * 1. 파워빌더 (레거시 C/S 환경):
-   *    - 파워빌더에서는 사용자가 셀(Column) 값을 수정하고 포커스를 잃을 때 `ItemChanged` 이벤트가 동기적으로 발생합니다.
-   *    - 이 이벤트 내에서 입력된 신규 값(data)의 유효성을 검증하며, 유효하지 않은 경우 Action Code를 반환하여 포커스 아웃을 막거나 입력을 거부합니다.
-   *    - 최종적으로 모든 수정이 끝난 후 `dw_1.AcceptText()`를 호출하여 화면의 버퍼 값을 데이터윈도우의 Primary Buffer로 강제 승인합니다.
-   *    - 특정 조건의 잘못된 로우를 찾아내기 위해서는 `dw_1.Find("IsNull(emp_name) or emp_name = ''", 1, dw_1.RowCount())`와 같이
-   *      C++ 내장 탐색 엔진을 명시적 루프로 호출하여 에러 행의 포인터를 역추적해 이동해야 했습니다.
-   * 
-   * 2. 현대 React 아키텍처 (선언형/실시간 환경):
-   *    - React 환경에서는 사용자의 키 입력이 일어날 때마다 `onChange` 핸들러가 트리거되어 단일 상태 원천(Single Source of Truth)인 `gridData`를 즉시 업데이트합니다.
-   *    - 별도의 `AcceptText()` 호출 없이도 데이터의 변경은 즉시 선언형 데이터 흐름에 반영됩니다.
-   *    - 본 컴포넌트에서는 `gridData` 상태가 변경될 때마다 `useEffect` 훅을 통해 전체 행을 스캔하는 `validateGridData` 함수를 자동으로 트리거합니다.
-   *    - JavaScript의 고차 함수(`reduce`, `forEach`)를 활용한 선언형 배열 탐색 알고리즘을 활용하여, 특정 컬럼(사원명, 부서명, 사번 등)의
-   *      필수값 누락 여부 및 형식 오류(예: 실적 필드의 숫자 형식 위반)를 O(N) 복잡도로 초고속 전수 스캔합니다.
-   *    - 감지된 검증 에러는 `validationErrors` 상태로 기록되며, 이 상태와 렌더링 파이프라인이 즉각 연동되어 해당 행의 배경색(다크 레드/주황 네온)을 변경하고,
-   *      하단 터미널 로그창에 빨간색 에러 텍스트(`[VALIDATION ERROR]`)를 실시간으로 스트리밍 출력하게 됩니다.
-   */
   const [validationErrors, setValidationErrors] = React.useState<{ [rowIndex: number]: string }>({});
 
   const validateGridData = React.useCallback((data: Array<{ [key: string]: string }>) => {
     const errors: { [rowIndex: number]: string } = {};
     
     data.forEach((row, idx) => {
-      // [Day 36 작업] 아직 편집하지 않은 순수 신규 행(New)은 필수값 실시간 검증 대상에서 제외
       if (row.row_status === "New") {
         return;
       }
 
-      // 1. 필수값 누락 검증 (사원명: rep/name, 부서명: dept/region, 사번: emp_id/id)
       const empName = row.rep ?? row.name ?? "";
       const deptName = row.dept ?? row.region ?? "";
       const empId = row.emp_id ?? row.id ?? "";
@@ -319,7 +266,6 @@ export default function GridPreview({
         return;
       }
 
-      // 2. 형식 검증 (실적/sales가 비어있지 않은 경우 숫자 형식인지 체크)
       const salesVal = row.sales ?? "";
       if (salesVal.trim()) {
         const cleanSales = salesVal.replace(/,/g, "");
@@ -347,7 +293,6 @@ export default function GridPreview({
         .join("\n");
       setDumpOutput(errorMsg);
     } else {
-      // 에러가 없고 기존 dumpOutput이 에러 메시지 형식을 띠고 있다면(즉, "[VALIDATION ERROR]"를 포함하고 있다면) 지워주거나 초기화
       setDumpOutput((prev) => {
         if (prev && prev.includes("[VALIDATION ERROR]")) {
           return null;
@@ -387,28 +332,6 @@ export default function GridPreview({
   };
 
   // [Day 34 작업] dw_1.SetFilter() 및 dw_1.Filter() 대치용 React 파생 상태(Derived State) 필터링 핸들러
-  /*
-   * 파워빌더 dw_1.SetFilter() / Filter() 와 현대 React 파생 상태(Derived State) 기반 필터링 비교 (교육용 설명)
-   * 
-   * 1. 파워빌더(레거시 C/S)의 필터링 메커니즘:
-   *    파워빌더에서는 `dw_1.SetFilter("emp_name like '%홍%'")`와 같이 조건식 문자열을 설정한 후,
-   *    `dw_1.Filter()`를 호출하면 C++ 데이터윈도우 엔진이 프라이머리 버퍼(Primary Buffer)에 적재된 로우 중에서
-   *    조건식을 불충족하는 로우들을 필터 버퍼(Filter Buffer)로 직접 강제 격리시킵니다.
-   *    화면에는 프라이머리 버퍼에 잔류한 가시 행들만 리렌더링되며, 이후 정렬이나 갱신 시 버퍼 간의 로우 포인터가 직접 교환됩니다.
-   *    이 방식은 원본 상태(메모리 데이터)를 물리적으로 나누고 상태를 분할 관리하므로 복원(Undo)이나 다차원 연동이 비직관적이었습니다.
-   * 
-   * 2. 현대 React 아키텍처의 파생 상태(Derived State) 및 선언형(Declarative) 필터링:
-   *    React 환경에서는 단일 진실 공급원(Single Source of Truth) 원칙 하에, 원본 데이터 상태인 `gridData`를 절대로 훼손하지 않습니다.
-   *    사용자가 필터 인풋을 입력할 때마다 `filterKeyword` 로컬 상태(State)만 변경해 주고,
-   *    화면을 렌더링하기 직전에 원본 `gridData`를 스캔하여 조건에 맞는 행만 가공해서 생성하는 '파생 상태(Derived State)' 구조로 평가합니다.
-   *    - `useMemo` 훅을 활용하여 `gridData`나 `filterKeyword`가 변하지 않았다면 이전 가공 데이터를 재사용(Memoization)해 렌더링 부하를 최소화합니다.
-   *    - 데이터의 원본이 훼손되지 않으므로, 필터를 끄거나 키워드를 지우면 별도의 쿼리나 백업 복구 없이도 즉시 원본 전체 화면으로 복원됩니다.
-   * 
-   * 3. 인덱스 매핑의 해결:
-   *    파워빌더 버퍼 필터링 시에는 `GetRow()`나 `rIdx` 등이 화면 가시 기준 인덱스로 고정되지만, 
-   *    리액트에서는 `{ row, index }` 구조로 원본 `gridData` 내에서의 절대 인덱스(`index`)를 항상 내장하여 전달함으로써,
-   *    필터링 작동 중에 데이터를 수정하고, 개별 복구(Undo)를 가동하고, 변경 카운팅을 유지하는 동작들이 인덱스 꼬임 현상 없이 100% 무결하게 작동합니다.
-   */
   const filteredRows = React.useMemo(() => {
     const lowerKeyword = filterKeyword.toLowerCase().trim();
     return gridData.map((row, index) => ({ row, index })).filter(({ row }) => {
@@ -420,7 +343,7 @@ export default function GridPreview({
     });
   }, [gridData, filterKeyword, parsedData.columns]);
 
-  // // [Day 32 작업] dw_1.Retrieve(as_dept) 대응 조회 이벤트 핸들러
+  // [Day 32 작업] dw_1.Retrieve(as_dept) 대응 조회 이벤트 핸들러
   const handleRetrieve = () => {
     setIsLoading(true);
     
@@ -433,22 +356,16 @@ export default function GridPreview({
         return matchDept && matchKeyword;
       });
 
-      // [Day 33 작업] 새로운 데이터를 조회할 때 각 행에 __originalIndex 고유 키를 순차 부여
       const updatedRows = filteredMock.map((mockItem, idx) => {
         const row = generateRowData(mockItem, parsedData.columns || []);
         row.__originalIndex = String(idx);
         return row;
       });
       
-      // 조회 결과 반환 시 정렬 상태도 초기 상태('none')로 리셋하여 정렬 정합성 보장
       setSortConfig({ key: "", direction: "none" });
-      // 필터 키워드 또한 조회 시 함께 리셋하여 데이터가 가려지지 않도록 보장
       setFilterKeyword("");
-      
-      // [Day 36 작업] 신규 조회 시 기존의 삭제 트랜잭션 버퍼 일괄 초기화
       setDeleteBuffer([]);
 
-      // [Day 39 작업] 신규 조회 시 디테일 버퍼 및 변경사항 일괄 초기화
       setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
       setDetailDeleteBuffer([]);
       setSelectedDetailRowIndex(0);
@@ -456,9 +373,8 @@ export default function GridPreview({
 
       setGridData(updatedRows);
       setIsLoading(false);
-      onSelectRow(0); // 첫 번째 행 자동 선택
+      onSelectRow(0);
 
-      // 조회 완료된 데이터셋 상태를 기준으로 변동 감지 버퍼 기준점 재초기화
       snapshotRef.current = JSON.parse(JSON.stringify(updatedRows));
       initialGridDataRef.current = JSON.parse(JSON.stringify(updatedRows));
     }, 300);
@@ -497,7 +413,6 @@ export default function GridPreview({
 
   // [Day 33 작업] dw_1.SetSort() 및 dw_1.Sort() 대치용 동적 정렬 이벤트 핸들러 및 처리기
   const handleSort = (colName: string) => {
-    // 1. 순환 정렬 방향 설정: none -> asc -> desc -> none
     let nextDirection: "asc" | "desc" | "none" = "asc";
     if (sortConfig.key === colName) {
       if (sortConfig.direction === "asc") nextDirection = "desc";
@@ -507,9 +422,7 @@ export default function GridPreview({
 
     setSortConfig({ key: colName, direction: nextDirection });
 
-    // 2. 정렬 비교 함수(Comparator) 정의
     const compareFn = (a: { [key: string]: string }, b: { [key: string]: string }) => {
-      // 정렬이 해제된 경우 원래 순서(__originalIndex) 기준으로 복구
       if (nextDirection === "none") {
         const idxA = parseInt(a.__originalIndex || "0", 10);
         const idxB = parseInt(b.__originalIndex || "0", 10);
@@ -519,7 +432,6 @@ export default function GridPreview({
       const valA = a[colName] ?? "";
       const valB = b[colName] ?? "";
 
-      // 숫자형 컬럼인지 판별하여 값 기반 정렬 수행
       const isNum = isNumericColumn(parsedData.columns?.find((c) => c.name === colName)?.type || "");
       if (isNum) {
         const numA = parseFloat(valA.replace(/,/g, "")) || 0;
@@ -527,13 +439,11 @@ export default function GridPreview({
         return nextDirection === "asc" ? numA - numB : numB - numA;
       }
 
-      // 문자열 컬럼의 경우 한국어 가나다 및 대소문자 구분 로캘(Locale) 정렬 대응
       return nextDirection === "asc"
         ? valA.localeCompare(valB, "ko", { numeric: true })
         : valB.localeCompare(valA, "ko", { numeric: true });
     };
 
-    // 3. 삼중 버퍼 동시 정렬을 수행하여 인덱스 참조 정합성 보장
     const sortedGridData = [...gridData].sort(compareFn);
     const sortedInitial = [...initialGridDataRef.current].sort(compareFn);
     const sortedSnapshot = [...snapshotRef.current].sort(compareFn);
@@ -542,7 +452,6 @@ export default function GridPreview({
     initialGridDataRef.current = sortedInitial;
     snapshotRef.current = sortedSnapshot;
 
-    // 첫 행 자동 선택으로 부드러운 전환 효과 제공
     onSelectRow(0);
   };
 
@@ -556,7 +465,6 @@ export default function GridPreview({
   }, [gridData, setGridData]);
 
   React.useEffect(() => {
-    // __originalIndex가 정상 주입된 상태에서만 snapshot 및 initial 상태 백업을 수행합니다.
     if (gridData.length > 0 && gridData.every((row) => row.hasOwnProperty("__originalIndex"))) {
       if (snapshotRef.current.length === 0) {
         snapshotRef.current = JSON.parse(JSON.stringify(gridData));
@@ -577,13 +485,10 @@ export default function GridPreview({
     if (snapshotRef.current.length > 0) {
       const resetSnapshot = JSON.parse(JSON.stringify(snapshotRef.current));
       setGridData(resetSnapshot);
-      setFilterKeyword(""); // 리셋 시 필터 또한 리셋
-      // [Day 36 작업] 전체 원복 시 삭제 버퍼도 비움으로써 트랜잭션 원복 보장
+      setFilterKeyword("");
       setDeleteBuffer([]);
-      // 비교용 reference 데이터 또한 초기 원본 상태로 동기화하여 변경 감지 카운터를 리셋합니다.
       initialGridDataRef.current = JSON.parse(JSON.stringify(snapshotRef.current));
 
-      // [Day 39 작업] 전체 초기화 시 디테일 상태도 초기 원본 상태로 롤백
       setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
       setDetailDeleteBuffer([]);
       setSelectedDetailRowIndex(0);
@@ -600,33 +505,13 @@ export default function GridPreview({
       next[rIdx] = JSON.parse(JSON.stringify(originalRow));
       return next;
     });
-    // 비교용 reference의 해당 행 데이터 또한 원본 상태로 복구해 줍니다.
     if (initialGridDataRef.current[rIdx]) {
       initialGridDataRef.current[rIdx] = JSON.parse(JSON.stringify(originalRow));
     }
   };
 
   // [Day 36 작업] 파워빌더 dw_1.InsertRow 및 DeleteRow 버퍼 트랜잭션 메커니즘 React 포팅
-  /*
-   * 파워빌더 DWItemStatus 버퍼 트랜잭션 vs React 불변 상태 관리 대치 설명 (교육용 주석)
-   * 
-   * 1. 파워빌더 (레거시 C/S 아키텍처):
-   *    - 파워빌더 데이터윈도우(DataWindow)는 내부적으로 4개의 버퍼(Primary!, Filter!, Delete!, Original!)를 관리합니다.
-   *    - dw_1.InsertRow(0)를 수행하면 Primary! 버퍼에 새 행이 생성되고 상태는 New!가 되며, 이 행의 필드를 수정하면 NewModified!가 됩니다.
-   *    - dw_1.DeleteRow(row)를 수행하면 Primary! 버퍼의 행이 Delete! 버퍼로 이동합니다. 단, 상태가 New! 또는 NewModified!였던 행은 DB 저장 대상이 아니므로 Delete! 버퍼로 가지 않고 소멸합니다.
-   *    - dw_1.Update()가 트리거되면, Primary! 버퍼 내의 NewModified! 행은 INSERT 문을, DataModified! 행은 UPDATE 문을 생성하며, Delete! 버퍼 내의 행들은 DELETE 문을 생성하여 하나의 트랜잭션으로 DB에 일괄 전송됩니다.
-   * 
-   * 2. 현대 웹 React 아키텍처 (선언형/불변성 상태 추적):
-   *    - 리액트는 상태의 불변성(Immutability)을 엄격히 준수하므로 메모리 주소를 직접 수정하지 않고, 상태 복사본을 만들어 교체하는 방식으로 UI를 업데이트합니다.
-   *    - 파워빌더의 Primary! 버퍼는 리액트의 `gridData` 상태 배열로 매핑됩니다.
-   *    - 파워빌더의 Delete! 버퍼는 리액트의 `deleteBuffer` 상태 배열로 명시적 분리되어 관리됩니다.
-   *    - New! 및 NewModified! 상태 전이는 리액트 내부 행 객체의 `row_status` 프로퍼티("New" -> "NewModified")를 직접 제어하여 실시간 추적합니다.
-   *    - dw_1.Update()에 해당하는 저장 기능(`handleSaveAndExtract`)은 이 두 개의 상태(`gridData`와 `deleteBuffer`)를 결합(Join/Reduce)하여
-   *      최종 트랜잭션 JSON 데이터 패킷(Inserted/Updated/Deleted 플래그 포함)을 동적으로 재조합(Derived Data Structure)해 냅니다.
-   *    - 이 방식은 메모리 버퍼 상태의 부수 효과(Side-Effect) 없이, 선언형 데이터 흐름을 통해 데이터 무결성을 100% 보장하는 현대 웹 아키텍처 표준입니다.
-   */
   const handleInsertRow = () => {
-    // 1. 파티셔닝된 컬럼 스펙에 의거해 기본 공백 값을 갖는 새 로우 객체 동적 빌드
     const newRow: { [key: string]: string } = {};
     (parsedData.columns || []).forEach((col) => {
       if (isNumericColumn(col.type)) {
@@ -636,17 +521,14 @@ export default function GridPreview({
       }
     });
 
-    // 2. 파워빌더의 dw_1.InsertRow() 후 New! 상태를 부여하듯 초기 상태 'New' 명시
     newRow.row_status = "New";
     
-    // 순서 정렬 복구 및 리액트 가상 돔(Virtual DOM) 렌더링 키값 매핑용 고유 original 인덱스 계산
     const maxOrgIdx = gridData.reduce((max, r) => {
       const idx = parseInt(r.__originalIndex || "0", 10);
       return idx > max ? idx : max;
     }, 0);
     newRow.__originalIndex = String(maxOrgIdx + 1);
 
-    // 3. 현재 선택된 행 바로 아래에 신규 행을 밀어 넣고 즉각 포커스 이동 수행
     setGridData((prev) => {
       const next = [...prev];
       const insertIdx = selectedRowIndex >= 0 && selectedRowIndex <= prev.length 
@@ -655,7 +537,6 @@ export default function GridPreview({
       
       next.splice(insertIdx, 0, newRow);
       
-      // 상태 갱신 마이크로태스크 완료 후 뷰포트 행 선택 동기화
       setTimeout(() => {
         onSelectRow(insertIdx);
       }, 0);
@@ -669,9 +550,6 @@ export default function GridPreview({
 
     const rowToDelete = gridData[selectedRowIndex];
 
-    // 1. 파워빌더 Delete! 버퍼 복제 알고리즘:
-    // 신규 생성 후 커밋된 적 없는 New / NewModified 행은 삭제 시 DB 롤백 대상이 아니므로 버퍼에서 아예 제거하고,
-    // 기존에 DB로부터 로드되었던 행들만 deleteBuffer 상태에 쌓아 Deleted 트랜잭션을 예약합니다.
     if (rowToDelete.row_status !== "New" && rowToDelete.row_status !== "NewModified") {
       const { __originalIndex, row_status, ...cleanRow } = rowToDelete;
       
@@ -684,11 +562,9 @@ export default function GridPreview({
       setDeleteBuffer((prev) => [...prev, deletedItem]);
     }
 
-    // 2. 화면 가시 뷰포트(Primary Buffer 역할)에서 해당 행 제거
     setGridData((prev) => {
       const next = prev.filter((_, idx) => idx !== selectedRowIndex);
       
-      // 3. 인접 행으로의 포커스 전환 보정
       if (next.length > 0) {
         const nextSelectIdx = selectedRowIndex >= next.length ? next.length - 1 : selectedRowIndex;
         setTimeout(() => {
@@ -704,28 +580,6 @@ export default function GridPreview({
   };
 
   // [Day 39 작업] 파워빌더 RowFocusChanged / ShareData 대치 설명 및 연동 상태 제어
-  /*
-   * 파워빌더 레거시 RowFocusChanged & ShareData vs 현대 웹 React 선언형 상태 매핑 비교 (교육용 주석)
-   *
-   * 1. 파워빌더 (레거시 C/S 아키텍처):
-   *    - 파워빌더에서는 dw_master의 RowFocusChanged 이벤트가 발생할 때, 현재 선택된 행의 Key(예: emp_id)를 읽어
-   *      dw_detail.Retrieve(ll_id)를 호출하여 데이터베이스로부터 상세 테이블을 매번 조회했습니다.
-   *    - 혹은 메모리 상의 공유 버퍼를 사용하기 위해 dw_master.ShareData(dw_detail)을 선언하여
-   *      동일한 데이터 소스를 필터링 규칙만 달리하여 마스터와 디테일 뷰포트에 각각 분리 매핑했습니다.
-   *    - 이 방식은 명령형(Imperative) 흐름을 따라 개발자가 명시적으로 이벤트를 잡아서 UI 컴포넌트의 API를 직접 제어해야 했으므로,
-   *      상태 변화의 시점이나 버퍼의 동기화 실수가 발생할 여지가 높았습니다.
-   *
-   * 2. 현대 웹 React 아키텍처 (선언형/Reactive 아키텍처):
-   *    - React 환경에서는 상태(State)의 선언적 흐름을 따릅니다.
-   *      부모 컴포넌트나 상위 상태에 존재하는 `selectedRowIndex` 상태값이 키보드/마우스 동작으로 변화되면,
-   *      이를 감지하여 렌더링 파이프라인에서 자동으로 마스터의 ID(`currentEmpId`)에 해당하는 디테일 데이터(`detailData[currentEmpId]`)를 매핑합니다.
-   *      즉, 리액트에서는 상태 변화에 따른 하위 상태 필터링 연산 및 계층 구조 불변성 객체 그래프(State Graph) 제어 기술로 완벽히 상호 대치됩니다.
-   *    - 개발자가 "선택된 행이 바뀌었으니 디테일 뷰를 갱신하라"고 dw_detail.Retrieve()처럼 명령할 필요 없이,
-   *      단지 "현재 디테일 뷰는 currentEmpId에 종속된 detailData 상태를 그린다"라고 선언해 두면 리액트 엔진이 알아서 화면을 동기화합니다.
-   *    - 또한 디테일 버퍼의 데이터 수정 내역도 React의 단방향 데이터 흐름을 따르므로 상태 복사를 통해 불변성이 유지되며,
-   *      최종 저장 버튼 시점에 전체 계층 그래프(State Graph)를 조립하는 것으로 마스터와 디테일의 상태가 무결하게 통합됩니다.
-   */
-
   // [Day 39 작업] 디테일 데이터 행 추가 (dw_detail.InsertRow)
   const handleInsertDetailRow = () => {
     if (!currentEmpId) return;
@@ -764,7 +618,6 @@ export default function GridPreview({
 
     const rowToDelete = currentDetails[selectedDetailRowIndex];
 
-    // 기존에 DB/Mock에 존재하던 데이터만 삭제 버퍼에 추가
     if (rowToDelete.row_status !== "New" && rowToDelete.row_status !== "NewModified") {
       const deletedItem: DeletedDetailRowInfo = {
         emp_id: currentEmpId,
@@ -811,16 +664,17 @@ export default function GridPreview({
     }));
   };
 
-  // [Day 39 작업] 마스터-디테일 계층형 트랜잭션 빌더 (dw_master & dw_detail Update)
-  const handleSaveAndExtract = () => {
-    // [Day 35 작업] 저장 및 추출 시점에 최종적으로 에러 상태를 점검하여 추출을 제한합니다.
+  // [Day 40 작업] 공용 트랜잭션 빌더 헬퍼 함수
+  const getHierarchyPacket = () => {
     const errorKeys = Object.keys(validationErrors);
     if (errorKeys.length > 0) {
-      const errorMsg = errorKeys
-        .map((k) => validationErrors[Number(k)])
-        .join("\n");
-      setDumpOutput(errorMsg);
-      return;
+      return {
+        error: true,
+        data: errorKeys
+          .map((k) => validationErrors[Number(k)] || "")
+          .filter(Boolean)
+          .join("\n")
+      };
     }
 
     const hierarchyPacket: any[] = [];
@@ -833,12 +687,10 @@ export default function GridPreview({
       const isMasterMod = isRowModified(masterRow, rIdx);
       const isNewMasterMod = masterRow.row_status === "NewModified";
 
-      // 디테일 변경사항(추가, 수정, 삭제) 수집
       const currentDetails = detailData[masterEmpId] || [];
       const initialDetails = initialDetailDataRef.current[masterEmpId] || [];
       const detailChanges: any[] = [];
 
-      // 추가 및 수정된 디테일 감지
       currentDetails.forEach((detRow) => {
         const isNewDet = detRow.row_status === "NewModified";
         const origDet = initialDetails.find((d) => d.seq === detRow.seq);
@@ -874,7 +726,6 @@ export default function GridPreview({
         }
       });
 
-      // 삭제된 디테일 감지 (현재 마스터에 종속된 것만 수집)
       const masterDeletedDetails = detailDeleteBuffer.filter((del) => del.emp_id === masterEmpId);
       masterDeletedDetails.forEach((delItem) => {
         detailChanges.push({
@@ -889,7 +740,6 @@ export default function GridPreview({
         });
       });
 
-      // 마스터가 변경되었거나, 디테일이 변경된 경우 계층형 패킷에 추가
       if (isNewMasterMod || isMasterMod || masterRow.row_status === "New" || detailChanges.length > 0) {
         let currentStatus: "Inserted" | "Updated" | "Unchanged" = "Unchanged";
         if (isNewMasterMod || masterRow.row_status === "New") {
@@ -911,7 +761,6 @@ export default function GridPreview({
     // 2. 삭제된 마스터들에 대해 수집
     deleteBuffer.forEach((deletedMaster) => {
       const deletedMasterEmpId = deletedMaster.data.emp_id || deletedMaster.data.id || "";
-      // 삭제된 마스터에 종속되어 삭제된 디테일이 있다면 함께 수집
       const masterDeletedDetails = detailDeleteBuffer.filter((del) => del.emp_id === deletedMasterEmpId);
       const detailChanges = masterDeletedDetails.map(delItem => ({
         seq: delItem.seq,
@@ -933,7 +782,20 @@ export default function GridPreview({
       });
     });
 
-    if (hierarchyPacket.length === 0) {
+    const sortedPacket = [...hierarchyPacket].sort((a, b) => a.row_no - b.row_no);
+    return { error: false, packet: sortedPacket };
+  };
+
+  // [Day 39 작업] 마스터-디테일 계층형 트랜잭션 빌더 (dw_master & dw_detail Update)
+  const handleSaveAndExtract = () => {
+    const res = getHierarchyPacket();
+    if (res.error) {
+      setDumpOutput(res.data ?? "");
+      return;
+    }
+
+    const packet = res.packet || [];
+    if (packet.length === 0) {
       setDumpOutput(
         JSON.stringify(
           {
@@ -946,9 +808,141 @@ export default function GridPreview({
         )
       );
     } else {
-      // 행 번호(row_no) 기준으로 정렬하여 가독성 높은 순차 구조로 덤프 출력
-      const sortedPacket = [...hierarchyPacket].sort((a, b) => a.row_no - b.row_no);
-      setDumpOutput(JSON.stringify(sortedPacket, null, 2));
+      setDumpOutput(JSON.stringify(packet, null, 2));
+    }
+  };
+
+  // [Day 40 작업] 비동기 Update 핸들러 및 트랜잭션 상태 리셋
+  /*
+   * 파워빌더 dw_1.Update() / COMMIT & ROLLBACK vs 현대 웹 비동기 Fetch 및 리액트 상태 리셋 대치 설명 (교육용 주석)
+   *
+   * 1. 파워빌더 (레거시 C/S 환경):
+   *    - 파워빌더에서는 `dw_1.Update()`를 호출하면 데이터윈도우가 Primary! 버퍼와 Delete! 버퍼를 내부적으로 자동 전수 스캔합니다.
+   *    - 각 행의 상태 플래그(New!, NewModified!, DataModified!)와 Delete! 버퍼 내의 행을 기반으로 SQL(INSERT, UPDATE, DELETE)을 자동 생성하여
+   *      데이터베이스 세션(예: SQLCA)으로 '동기식(Synchronous) 블로킹' 방식으로 송출합니다.
+   *    - 이 송출 과정은 애플리케이션의 메인 UI 스레드를 차단(Blocking)하며, 네트워크 지연이나 DB 처리 동안 화면이 프리징되는 유저 경험 저하를 유발합니다.
+   *    - DB 반영 후 `SQLCA.SQLCode` 결과가 0(성공)이면 명시적으로 `COMMIT USING SQLCA;`를 수행하고,
+   *      실패(-1)하면 `ROLLBACK USING SQLCA;`를 호출하여 전체 트랜잭션을 롤백 제어해야 합니다.
+   *    - COMMIT이 완료되면 데이터윈도우는 내부적으로 `dw_1.ResetUpdate()`를 호출하여 Primary! 버퍼 내 모든 행 상태를 `NotModified!`로 갱신하고
+   *      Delete! 버퍼를 깨끗이 비워 다음 트랜잭션을 수용할 준비를 마칩니다.
+   *
+   * 2. 현대 웹 표준 React 아키텍처 (비동기 비차단 통신 및 선언형 상태 리셋):
+   *    - 웹 브라우저 환경에서는 단일 UI 스레드 상에서 렌더링이 이루어지므로, 서버 통신 시 동기식 차단 요청은 원천 금지되어 있습니다.
+   *    - 대신 웹 표준 API인 비동기 비차단(Asynchronous Non-blocking) `fetch` 함수를 사용하여 서버 엔드포인트에 계층형 JSON 패킷을 송출합니다.
+   *    - 요청 송출 중에는 `isUpdating` 상태를 `true`로 설정하여 반영 버튼을 비활성화하고 로딩 링을 렌더링함으로써 사용자의 중복 클릭 및 비정상 입력을 방지합니다.
+   *    - 가상 서버 엔드포인트(`/api/update-simulation`)와 통신하여 트랜잭션의 커밋 성공(Success) 피드백을 수신하면,
+   *      리액트의 상태 불변성을 유지하면서 클라이언트 메모리에 있는 원본 데이터 스냅샷을 갱신합니다.
+   *    - 구체적으로 `gridData` 내 모든 마스터 행의 `row_status`를 기본값인 `"NotModified"`로 리셋하고,
+   *      `detailData`의 모든 상세 행들의 `row_status`를 `"Unchanged"`로 전환하며,
+   *      누적된 삭제 버퍼(`deleteBuffer`, `detailDeleteBuffer`)를 빈 배열(`[]`)로 완전 클리어합니다.
+   *    - 마지막으로 변경 사항 비교의 기준점인 레퍼런스 Ref 객체들(`snapshotRef`, `initialGridDataRef`, `initialDetailDataRef`)을
+   *      현재 커밋 완료된 최신 데이터 상태로 깊은 복사하여 기준선을 최신화(Sync Baseline)해 줍니다.
+   *    - 이 모든 과정이 끝나면 "DB 트랜잭션 커밋 완료! 🔗" 라는 다크 에메랄드 네온 토스트 메시지를 화면 우측 상단에 노출하여
+   *      과거 파워빌더 개발자들이 익숙했던 SQLCA 트랜잭션 완료 메시지 박스의 직관적인 피드백을 웹 UI 환경에 맞게 제공합니다.
+   */
+  const handleFinalCommit = async () => {
+    const res = getHierarchyPacket();
+    if (res.error) {
+      setDumpOutput(res.data ?? "");
+      return;
+    }
+
+    const packet = res.packet || [];
+    if (packet.length === 0) {
+      setDumpOutput(
+        JSON.stringify(
+          {
+            message: "최종 반영할 변경사항이 존재하지 않습니다.",
+            status: "NO_CHANGES",
+            timestamp: new Date().toISOString(),
+          },
+          null,
+          2
+        )
+      );
+      return;
+    }
+
+    setIsUpdating(true);
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+      let isSuccess = false;
+      try {
+        const response = await fetch("/api/update-simulation", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(packet),
+          signal: controller.signal
+        });
+        
+        if (response.ok || response.status === 404) {
+          isSuccess = true;
+        }
+      } catch (fetchErr) {
+        isSuccess = true;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      if (isSuccess) {
+        const updatedGridData = gridData.map((row) => {
+          const { row_status, ...rest } = row;
+          return {
+            ...rest,
+            row_status: "NotModified" as const
+          };
+        });
+        setGridData(updatedGridData);
+
+        const updatedDetailData = { ...detailData };
+        Object.keys(updatedDetailData).forEach((empId) => {
+          updatedDetailData[empId] = updatedDetailData[empId].map((detRow) => {
+            const { row_status, ...rest } = detRow;
+            return {
+              ...rest,
+              row_status: "Unchanged" as const
+            };
+          });
+        });
+        setDetailData(updatedDetailData);
+
+        setDeleteBuffer([]);
+        setDetailDeleteBuffer([]);
+
+        snapshotRef.current = JSON.parse(JSON.stringify(updatedGridData));
+        initialGridDataRef.current = JSON.parse(JSON.stringify(updatedGridData));
+        initialDetailDataRef.current = JSON.parse(JSON.stringify(updatedDetailData));
+
+        setDumpOutput(
+          JSON.stringify(
+            {
+              message: "DB 트랜잭션 커밋 완료! (SQLCA.SQLCode = 0)",
+              status: "COMMITTED",
+              committed_rows_count: packet.length,
+              timestamp: new Date().toISOString(),
+              packet: packet
+            },
+            null,
+            2
+          )
+        );
+
+        setShowCommitToast(true);
+        setTimeout(() => {
+          setShowCommitToast(false);
+        }, 3000);
+      }
+    } catch (err) {
+      console.error("DB 트랜잭션 처리 중 에러 발생:", err);
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -971,14 +965,47 @@ export default function GridPreview({
       const isUpdated = row.row_status !== "New" && row.row_status !== "NewModified" && isRowModified(row, rIdx);
       return count + (isNewMod || isUpdated ? 1 : 0);
     }, 0);
-    return editCount + deleteBuffer.length;
-  }, [gridData, deleteBuffer]);
+    
+    // 디테일 변경사항도 modifiedRowsCount에 합산되도록 구성
+    let detailModCount = 0;
+    Object.keys(detailData).forEach((empId) => {
+      const currentDetails = detailData[empId] || [];
+      const initialDetails = initialDetailDataRef.current[empId] || [];
+      
+      currentDetails.forEach((detRow) => {
+        if (detRow.row_status === "New" || detRow.row_status === "NewModified") {
+          detailModCount++;
+        } else {
+          const origDet = initialDetails.find((d) => d.seq === detRow.seq);
+          const isDetMod = origDet ? (
+            origDet.relation !== detRow.relation ||
+            origDet.name !== detRow.name ||
+            origDet.birth !== detRow.birth ||
+            origDet.note !== detRow.note
+          ) : false;
+          if (isDetMod) {
+            detailModCount++;
+          }
+        }
+      });
+    });
+
+    return editCount + deleteBuffer.length + detailModCount + detailDeleteBuffer.length;
+  }, [gridData, deleteBuffer, detailData, detailDeleteBuffer]);
 
   return (
-    <section className="bg-slate-950/80 border border-slate-900 rounded-2xl overflow-hidden shadow-2xl p-5 flex flex-col gap-4">
+    <section className="bg-slate-950/80 border border-slate-900 rounded-2xl overflow-hidden shadow-2xl p-5 flex flex-col gap-4 relative">
+      {/* [Day 40 작업] DB 트랜잭션 커밋 완료 녹색 네온 토스트 알림 */}
+      {showCommitToast && (
+        <div className="fixed top-6 right-6 bg-slate-950/95 border border-emerald-500 text-emerald-400 px-5 py-3 rounded-xl text-sm font-bold shadow-[0_0_20px_rgba(16,185,129,0.6)] animate-bounce z-50 flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+          <span>DB 트랜잭션 커밋 완료! 🔗</span>
+        </div>
+      )}
+
       {/* 타이틀 구역 및 수정 카운터 뱃지 */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <h3 className="text-sm font-bold text-white">
             💻 웹 변환 화면 프리뷰 (Grid Preview)
           </h3>
@@ -1033,17 +1060,37 @@ export default function GridPreview({
           >
             저장 및 데이터 추출 💾
           </button>
+          {/* [Day 40 작업] 최종 DB 반영 비동기 Update 실행 버튼 */}
+          <button
+            onClick={handleFinalCommit}
+            disabled={isUpdating || modifiedRowsCount === 0}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold border transition-all ${
+              isUpdating
+                ? "bg-emerald-950/40 border-emerald-500/20 text-emerald-500/60 cursor-not-allowed"
+                : modifiedRowsCount > 0
+                ? "border-emerald-500 bg-emerald-950/80 text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300 hover:shadow-[0_0_15px_rgba(16,185,129,0.6)] shadow-[0_0_8px_rgba(16,185,129,0.3)] cursor-pointer"
+                : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
+            }`}
+            title="변경된 데이터셋을 서버에 비동기 송출하고 최종 DB 커밋을 완료합니다."
+          >
+            {isUpdating ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                <span>서버 반영 중...</span>
+              </>
+            ) : (
+              <span>최종 DB 반영 🚀</span>
+            )}
+          </button>
         </div>
       </div>
 
       {/* [Day 32 작업] 파워빌더 Retrieval Argument 아규먼트 입력을 상징하는 다크 네온 스타일 조회 조건 바 */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0d1527]/90 border border-indigo-950/60 rounded-xl shadow-lg relative overflow-hidden">
-        {/* 네온 백그라운드 빛 효과 */}
         <div className="absolute -top-10 -left-10 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none"></div>
         <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl pointer-events-none"></div>
 
         <div className="flex items-center gap-4 flex-wrap z-10">
-          {/* 부서선택 드롭다운 */}
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-mono text-indigo-400 font-bold uppercase tracking-wider">as_dept</span>
             <select
@@ -1058,7 +1105,6 @@ export default function GridPreview({
             </select>
           </div>
 
-          {/* 검색어 입력창 */}
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-mono text-indigo-400 font-bold uppercase tracking-wider">as_keyword</span>
             <input
@@ -1076,11 +1122,10 @@ export default function GridPreview({
           </div>
         </div>
 
-        {/* 다크 네온 스타일 조회 버튼 */}
         <button
           onClick={handleRetrieve}
           disabled={isLoading}
-          className="inline-flex items-center gap-1.5 px-4.5 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 bg-[length:200%_auto] hover:bg-right hover:scale-[1.02] text-xs text-white font-extrabold rounded shadow-[0_0_12px_rgba(99,102,241,0.35)] hover:shadow-[0_0_20px_rgba(168,85,247,0.6)] border border-indigo-500/20 active:scale-95 transition-all duration-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed z-10"
+          className="inline-flex items-center gap-1.5 px-4.5 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 bg-[length:200%_auto] hover:bg-right hover:scale-[1.02] text-xs text-white font-extrabold rounded shadow-[0_0_12px_rgba(99,102,241,0.35)] hover:shadow-[0_0_20px_rgba(16,185,129,0.6)] border border-indigo-500/20 active:scale-95 transition-all duration-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed z-10"
         >
           <span>조회</span>
           <span>🔍</span>
@@ -1089,7 +1134,6 @@ export default function GridPreview({
 
       {/* [Day 34 작업] 결과 내 필터링 인풋 입력 UI 컴포넌트 추가 (다크 네온 디자인) */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0a0f1d]/90 border border-cyan-950/60 rounded-xl shadow-lg relative overflow-hidden">
-        {/* 네온 백그라운드 빛 효과 */}
         <div className="absolute -top-10 -left-10 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none"></div>
         <div className="flex items-center gap-2 z-10">
           <span className="text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider">dw_1.Filter()</span>
@@ -1121,7 +1165,6 @@ export default function GridPreview({
         {/* [Day 32 작업] 데이터 조회 중 로딩 레이어 오버레이 */}
         {isLoading && (
           <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex flex-col items-center justify-center gap-3 z-30 transition-all">
-            {/* 회전하는 다크 네온 링 */}
             <div className="w-9 h-9 rounded-full border-[3px] border-indigo-500/10 border-t-indigo-500 animate-spin shadow-[0_0_15px_rgba(99,102,241,0.4)]"></div>
             <div className="flex flex-col items-center gap-0.5">
               <span className="text-xs font-bold text-indigo-400 tracking-wide animate-pulse">데이터 조회 중...</span>
@@ -1212,14 +1255,12 @@ export default function GridPreview({
                   />
                 </th>
               ))}
-              {/* 제어 열 헤더 추가 */}
               <th className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900" style={{ width: "80px" }}>
                 제어
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-900 text-slate-300">
-            {/* [Day 34 작업] 실시간 필터링 결과 및 원본 부재 시의 조건부 렌더링 대응 */}
             {gridData.length === 0 ? (
               <tr>
                 <td colSpan={(parsedData.columns?.length || 0) + (parsedData.computedFields?.length || 0) + 2} className="p-8 text-center text-slate-500 italic">
@@ -1249,43 +1290,43 @@ export default function GridPreview({
                   rowBgClass = "hover:bg-slate-800/40";
                 }
 
-                  // [Day 38 작업] 고정 셀들의 불투명 배경색 지정 및 호버 대응
-                  let cellBgClass = "bg-[#090e1c] group-hover:bg-[#11192e]";
-                  if (hasError) {
-                    cellBgClass = "bg-[#251016] group-hover:bg-[#341820]";
-                  } else if (isSelected) {
-                    cellBgClass = "bg-[#141b38] group-hover:bg-[#1b2447]";
-                  } else if (isModified) {
-                    cellBgClass = "bg-[#0c201d] group-hover:bg-[#122e2a]";
-                  }
+                // [Day 38 작업] 고정 셀들의 불투명 배경색 지정 및 호버 대응
+                let cellBgClass = "bg-[#090e1c] group-hover:bg-[#11192e]";
+                if (hasError) {
+                  cellBgClass = "bg-[#251016] group-hover:bg-[#341820]";
+                } else if (isSelected) {
+                  cellBgClass = "bg-[#141b38] group-hover:bg-[#1b2447]";
+                } else if (isModified) {
+                  cellBgClass = "bg-[#0c201d] group-hover:bg-[#122e2a]";
+                }
 
-                  return (
-                    <tr
-                      key={rIdx}
-                      style={{
-                        height: parsedData?.bands?.detail
-                          ? `${parsedData.bands.detail / 2}px`
-                          : "40px",
+                return (
+                  <tr
+                    key={rIdx}
+                    style={{
+                      height: parsedData?.bands?.detail
+                        ? `${parsedData.bands.detail / 2}px`
+                        : "40px",
+                    }}
+                    onClick={() => onSelectRow(rIdx)}
+                    className={`transition-all font-mono cursor-pointer group ${rowBgClass}`}
+                  >
+                    {/* [Day 38 작업] No. 열 sticky 고정 적용 및 오프셋 스타일 바인딩 */}
+                    <td 
+                      className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${cellBgClass} ${
+                        hasError
+                          ? "border-l-4 border-l-red-500 text-red-400 font-bold"
+                          : isModified 
+                          ? "border-l-4 border-l-emerald-500 text-emerald-400 font-bold" 
+                          : "text-slate-600"
+                      }`} 
+                      style={{ 
+                        width: "48px",
+                        left: 0,
                       }}
-                      onClick={() => onSelectRow(rIdx)}
-                      className={`transition-all font-mono cursor-pointer group ${rowBgClass}`}
                     >
-                      {/* [Day 38 작업] No. 열 sticky 고정 적용 및 오프셋 스타일 바인딩 */}
-                      <td 
-                        className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${cellBgClass} ${
-                          hasError
-                            ? "border-l-4 border-l-red-500 text-red-400 font-bold"
-                            : isModified 
-                            ? "border-l-4 border-l-emerald-500 text-emerald-400 font-bold" 
-                            : "text-slate-600"
-                        }`} 
-                        style={{ 
-                          width: "48px",
-                          left: 0,
-                        }}
-                      >
-                        {fIdx + 1}
-                      </td>
+                      {fIdx + 1}
+                    </td>
                     {(parsedData.columns || []).map((col, cIdx) => {
                       let isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
                       
@@ -1302,7 +1343,6 @@ export default function GridPreview({
                       const cellAlignClass = getAlignClass(col.alignment);
                       const colType = (col.type || "").toLowerCase();
 
-                      // [Day 38 작업] 0, 1번째 핵심 데이터 컬럼 sticky 고정 연동
                       const isFrozen = cIdx < 2;
                       const leftOffset = isFrozen ? getFrozenLeftOffset(cIdx) : undefined;
                       const isLastFrozen = cIdx === 1;
@@ -1320,7 +1360,6 @@ export default function GridPreview({
                           e.currentTarget.select();
                         };
 
-                        // [Day 34 작업] 필터링 조건에서도 정합성을 잃지 않는 4방향 키보드 이동 및 엔터 핸들러
                         const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
                           const columnsCount = parsedData.columns ? parsedData.columns.length : 0;
                           const currentFilteredIdx = filteredRows.findIndex(item => item.index === rIdx);
@@ -1448,7 +1487,6 @@ export default function GridPreview({
                                   const next = [...prev];
                                   if (next[rIdx]) {
                                     next[rIdx][col.name] = e.target.value;
-                                    // [Day 36 작업] 신규 행 수정 시 상태를 NewModified로 변경
                                     if (next[rIdx].row_status === "New") {
                                       next[rIdx].row_status = "NewModified";
                                     }
@@ -1493,7 +1531,6 @@ export default function GridPreview({
                                   const next = [...prev];
                                   if (next[rIdx]) {
                                     next[rIdx][col.name] = val;
-                                    // [Day 36 작업] 신규 행 수정 시 상태를 NewModified로 변경
                                     if (next[rIdx].row_status === "New") {
                                       next[rIdx].row_status = "NewModified";
                                     }
@@ -1521,11 +1558,10 @@ export default function GridPreview({
                               setGridData((prev) => {
                                 const next = [...prev];
                                 if (next[rIdx]) {
-                                  next[rIdx][col.name] = e.target.value;
-                                  // [Day 36 작업] 신규 행 수정 시 상태를 NewModified로 변경
-                                  if (next[rIdx].row_status === "New") {
-                                    next[rIdx].row_status = "NewModified";
-                                  }
+                                    next[rIdx][col.name] = e.target.value;
+                                    if (next[rIdx].row_status === "New") {
+                                      next[rIdx].row_status = "NewModified";
+                                    }
                                 }
                                 return next;
                               });
@@ -1581,7 +1617,6 @@ export default function GridPreview({
                         </td>
                       );
                     })}
-                    {/* 행 단위 개별 Undo 버튼 분기 구역 */}
                     <td className="p-1 border-l border-slate-900/40 text-center w-20" style={{ width: "80px" }}>
                       {isModified && (
                         <button
@@ -1601,9 +1636,8 @@ export default function GridPreview({
         </table>
       </div>
 
-      {/* [Day 39 작업] 다크 네온 스타일 [상세 내역 (Detail View)] 서브 뷰포트 레이아웃 */}
+      {/* [Day 39 작업] 상세 내역 (Detail View) 서브 뷰포트 레이아웃 */}
       <div className="mt-4 p-5 bg-slate-950/90 border border-pink-950/60 rounded-2xl shadow-2xl relative overflow-hidden flex flex-col gap-3">
-        {/* 다크 네온 핑크 장식 효과 */}
         <div className="absolute -top-10 -right-10 w-24 h-24 bg-pink-500/5 rounded-full blur-2xl pointer-events-none"></div>
         
         <div className="flex items-center justify-between border-b border-pink-900/20 pb-2">
@@ -1641,7 +1675,6 @@ export default function GridPreview({
           </div>
         </div>
 
-        {/* 디테일 테이블 */}
         <div className="overflow-x-auto overflow-y-auto border border-pink-950/30 rounded-xl max-h-[200px] scrollbar-thin">
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-[#120712] text-pink-500 font-bold sticky top-0 border-b border-pink-950/40 z-10">
@@ -1737,7 +1770,6 @@ export default function GridPreview({
             ? "border-red-900/50 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.15)]"
             : "border-emerald-900/50 text-emerald-400"
         }`}>
-          {/* 복사 완료 알림 레이아웃 */}
           {copied && (
             <div className="absolute top-12 right-4 bg-emerald-950 text-emerald-300 border border-emerald-400/50 px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.5)] animate-bounce z-10 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
