@@ -83,6 +83,197 @@ const MOCK_DETAIL_DATA: { [empId: string]: DetailRow[] } = {
   "1010": []
 };
 
+// [Day 41 작업] 다국어 딕셔너리 자원 구역 및 아키텍처 비교
+/*
+ * [레거시 파워빌더와 현대 React의 다국어 지원(i18n) 아키텍처 비교]
+ *
+ * 1. 레거시 파워빌더 (C/S 환경):
+ *    - 파워빌더에서는 클라이언트 컴퓨터의 OS 언어 설정을 파악하기 위해 `GetEnvironment()` 함수를 호출하여
+ *      `Language` 속성을 조사하거나 시스템 레지스트리를 직접 뒤지는 복잡한 작업이 수반되었습니다.
+ *    - 조회된 언어 코드에 따라 데이터윈도우의 컬럼 캡션을 변경하기 위해, 개발자가 직접 컬럼 목록을 루프 돌며
+ *      `dw_1.Modify("column_name.Text='번역된캡션'")` 혹은 `dw_1.Object.column_name.Text = '...'` 처럼
+ *      데이터윈도우 오브젝트의 텍스트 프로퍼티를 동적으로 치환하는 동기식 명령형(Imperative) 스크립트를 수동 작성했습니다.
+ *    - 이 방식은 UI 변경 시마다 화면을 직접 조작해야 하고, 컨트롤과 다국어 로직이 결합되어 유지보수 비용을 증가시킵니다.
+ *
+ * 2. 현대 React 아키텍처 (웹 표준 선언형 렌더링):
+ *    - React 환경에서는 UI가 데이터의 상태(State)에 종속되는 선언형(Declarative) 패러다임으로 구현됩니다.
+ *    - 로컬 상태인 `currentLanguage`가 업데이트되면 React 런타임이 이를 감지하고, 단방향 데이터 바인딩(One-way Data Binding)을 통해
+ *      로케일 딕셔너리(`LANG_DICT`)에서 현재 언어에 대응하는 레이블을 찾아 UI를 자동으로 재렌더링합니다.
+ *      이때 가상 DOM(Virtual DOM) 기술을 활용하여 변경이 필요한 텍스트 노드만을 매우 빠르고 효율적으로 자동 치환합니다.
+ *    - 이로 인해 개발자는 런타임에 직접 컬럼 오브젝트에 접근하여 수정하는 코드를 작성할 필요가 없으며,
+ *      다국어 자원 딕셔너리와 UI 렌더링 로직을 완벽히 분리(SOC)하여 코드의 안정성과 확장성을 극대화합니다.
+ *    - 영어 레이블 및 UI 가이드 텍스트의 발음은 표준 IPA 기호를 사용합니다:
+ *      * 그리드 ➔ [ɡrɪd]
+ *      * 딕셔너리 ➔ [ˈdɪkʃəneri]
+ *      * 필터 ➔ [ˈfɪltər]
+ *      * 트랜잭션 ➔ [trænˈzækʃən]
+ *      * 버퍼 ➔ [ˈbʌfər]
+ *      * 에러 ➔ [ˈerər]
+ *      * 프리뷰 ➔ [ˈpriːvjuː]
+ *      * 업데이트 ➔ [ʌpˈdeɪt]
+ */
+const LANG_DICT = {
+  ko: {
+    title: "💻 웹 변환 화면 프리뷰 (Grid Preview)",
+    modifiedCount: "수정 중인 행: {count}건",
+    btnAddRow: "행 추가 ➕",
+    btnDeleteRow: "행 삭제 ➖",
+    btnResetAll: "전체 초기화 ↺",
+    btnSaveExtract: "저장 및 데이터 추출 💾",
+    btnFinalCommit: "최종 DB 반영 🚀",
+    updating: "서버 반영 중...",
+    deptLabel: "as_dept",
+    deptAll: "전체 부서",
+    deptDev: "개발팀 (R&D)",
+    deptSales: "영업팀 (Sales)",
+    deptHR: "인사팀 (HR)",
+    keywordLabel: "as_keyword",
+    keywordPlaceholder: "사원명 또는 사번 입력...",
+    btnRetrieve: "조회 🔍",
+    filterLabel: "dw_1.Filter()",
+    filterTitle: "결과 내 실시간 필터링 🔍",
+    filterPlaceholder: "필터 키워드 입력 (전체 컬럼 검색)...",
+    loading: "데이터 조회 중...",
+    loadingSub: "Retrieving...",
+    noData: "조회 결과 데이터가 존재하지 않습니다. 상단 조건바에서 조회해 주십시오.",
+    noFilteredData: "🔍 필터링 조건에 부합하는 데이터가 존재하지 않습니다. (검색어: \"{keyword}\")",
+    colNo: "No.",
+    colEmpId: "사번",
+    colRegion: "지역/부서",
+    colRep: "사원명",
+    colSales: "실적",
+    colStatus: "상태",
+    colName: "이름",
+    colDept: "부서",
+    colControl: "제어",
+    undo: "원복",
+    detailTitle: "[상세 내역 (Detail View) - 사원번호: {empId}]",
+    detailSelectRow: "마스터 그리드에서 직원을 선택해 주십시오.",
+    detailNoData: "등록된 상세 내역이 없습니다. [상세 추가] 버튼으로 등록해 주십시오.",
+    btnDetailAdd: "상세 추가 ➕",
+    btnDetailDelete: "상세 삭제 ➖",
+    detailSeq: "일련번호",
+    detailRelation: "관계",
+    detailName: "이름",
+    detailBirth: "생년월일",
+    detailNote: "비고",
+    toastCommitSuccess: "DB 트랜잭션 커밋 완료! 🔗",
+    validationErrEmpId: "[VALIDATION ERROR] {row}번째 행의 필수 항목인 '사번'이 누락되었습니다.",
+    validationErrName: "[VALIDATION ERROR] {row}번째 행의 필수 항목인 '사원명'이 누락되었습니다.",
+    validationErrDept: "[VALIDATION ERROR] {row}번째 행의 필수 항목인 '부서명'이 누락되었습니다.",
+    validationErrSales: "[VALIDATION ERROR] {row}번째 행의 실적(Sales) 필드가 올바른 숫자 형식이 아닙니다.",
+    commitSuccessMsg: "DB 트랜잭션 커밋 완료! (SQLCA.SQLCode = 0)",
+    noChanges: "최종 반영할 변경사항이 존재하지 않습니다.",
+    noChangesDump: "변경사항이 존재하지 않습니다.",
+    relationPlaceholder: "예: 배우자, 자녀",
+    namePlaceholder: "이름 입력",
+    notePlaceholder: "비고 입력",
+    valErrTitle: "[VALIDATION ERROR LOG] - 실시간 데이터 유효성 검증 오류",
+    txDumpTitle: "[TRANSACTION DATA DUMP] - dw_1.Update() Buffer JSON Output",
+    btnCopy: "클립보드 복사 📋",
+    btnDownload: "JSON 다운로드 💾",
+    btnClose: "닫기 ✕",
+    copiedToast: "복사 완료! 📋",
+    tooltipAddRow: "새 공백 데이터 행을 추가합니다 (dw_1.InsertRow).",
+    tooltipDeleteRow: "현재 선택된 행을 즉시 삭제합니다 (dw_1.DeleteRow).",
+    tooltipResetAll: "모든 변경 사항을 최초 데모 데이터 상태로 초기화합니다.",
+    tooltipSaveExtract: "변경된 데이터셋을 JSON 패킷으로 추출합니다.",
+    tooltipFinalCommit: "변경된 데이터셋을 서버에 비동기 송출하고 최종 DB 커밋을 완료합니다.",
+    tooltipSort: "클릭하여 순환 정렬 (기본값 ➔ 오름차순 ➔ 내림차순)",
+    tooltipResize: "드래그하여 너비 조절",
+    tooltipUndo: "이 행의 수정을 취소하고 원래 상태로 되돌립니다.",
+    tooltipDetailAdd: "현재 마스터에 예속된 새로운 상세 데이터 행을 추가합니다 (dw_detail.InsertRow).",
+    tooltipDetailDelete: "선택된 상세 데이터를 삭제합니다 (dw_detail.DeleteRow).",
+    tooltipCopy: "추출된 JSON 문자열을 클립보드에 원클릭 복사합니다.",
+    tooltipDownload: "추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다."
+  },
+  en: {
+    title: "💻 Web-Converted [ɡrɪd] [ˈpriːvjuː]",
+    modifiedCount: "Modified: {count} row(s)",
+    btnAddRow: "Add Row ➕",
+    btnDeleteRow: "Delete Row ➖",
+    btnResetAll: "Reset All ↺",
+    btnSaveExtract: "Save & Extract 💾",
+    btnFinalCommit: "Commit to DB 🚀",
+    updating: "Updating Server...",
+    deptLabel: "as_dept",
+    deptAll: "All Departments",
+    deptDev: "Dev Team (R&D)",
+    deptSales: "Sales Team",
+    deptHR: "HR Team",
+    keywordLabel: "as_keyword",
+    keywordPlaceholder: "Enter Employee Name or ID...",
+    btnRetrieve: "Retrieve 🔍",
+    filterLabel: "dw_1.Filter()",
+    filterTitle: "Real-time [ˈfɪltər] in Results 🔍",
+    filterPlaceholder: "Enter filter keyword (search all columns)...",
+    loading: "Retrieving data...",
+    loadingSub: "Retrieving...",
+    noData: "No retrieved data exists. Please retrieve from the search bar above.",
+    noFilteredData: "🔍 No data matches the [ˈfɪltər] keyword. (Keyword: \"{keyword}\")",
+    colNo: "No.",
+    colEmpId: "Emp ID",
+    colRegion: "Region/Dept",
+    colRep: "Name",
+    colSales: "Sales",
+    colStatus: "Status",
+    colName: "Name",
+    colDept: "Dept",
+    colControl: "Control",
+    undo: "Undo",
+    detailTitle: "[Detail View - Emp ID: {empId}]",
+    detailSelectRow: "Please select an employee from the master [ɡrɪd].",
+    detailNoData: "No detail records found. Please add using the [Add Detail] button.",
+    btnDetailAdd: "Add Detail ➕",
+    btnDetailDelete: "Delete Detail ➖",
+    detailSeq: "Seq",
+    detailRelation: "Relation",
+    detailName: "Name",
+    detailBirth: "Birthdate",
+    detailNote: "Note",
+    toastCommitSuccess: "DB [trænˈzækʃən] committed! 🔗",
+    validationErrEmpId: "[VALIDATION ERROR] Row {row}: Mandatory field 'Emp ID' is missing.",
+    validationErrName: "[VALIDATION ERROR] Row {row}: Mandatory field 'Name' is missing.",
+    validationErrDept: "[VALIDATION ERROR] Row {row}: Mandatory field 'Dept' is missing.",
+    validationErrSales: "[VALIDATION ERROR] Row {row}: Field 'Sales' is not a valid number.",
+    commitSuccessMsg: "DB [trænˈzækʃən] committed successfully! (SQLCA.SQLCode = 0)",
+    noChanges: "No changes to commit.",
+    noChangesDump: "No changes exist.",
+    relationPlaceholder: "e.g., Spouse, Child",
+    namePlaceholder: "Enter name",
+    notePlaceholder: "Enter note",
+    valErrTitle: "[VALIDATION ERROR LOG] - Real-time Data Validation [ˈerər]",
+    txDumpTitle: "[TRANSACTION DATA DUMP] - dw_1.Update() [ˈbʌfər] JSON Output",
+    btnCopy: "Copy 📋",
+    btnDownload: "Download JSON 💾",
+    btnClose: "Close ✕",
+    copiedToast: "Copied! 📋",
+    tooltipAddRow: "Add a new blank data row (dw_1.InsertRow).",
+    tooltipDeleteRow: "Delete the currently selected row immediately (dw_1.DeleteRow).",
+    tooltipResetAll: "Reset all changes to the initial demo data state.",
+    tooltipSaveExtract: "Extract the modified dataset into a JSON packet.",
+    tooltipFinalCommit: "Asynchronously transmit the modified dataset to the server and complete the final DB commit.",
+    tooltipSort: "Click to cycle sort (Default ➔ Ascending ➔ Descending)",
+    tooltipResize: "Drag to resize width",
+    tooltipUndo: "Cancel modification of this row and revert to the original state.",
+    tooltipDetailAdd: "Add a new detail data row subordinate to the current master (dw_detail.InsertRow).",
+    tooltipDetailDelete: "Delete the selected detail data (dw_detail.DeleteRow).",
+    tooltipCopy: "Copy the extracted JSON string to the clipboard with one click.",
+    tooltipDownload: "Download the extracted JSON file to the local disk immediately."
+  }
+};
+
+const translateColLabel = (colName: string, label: string, lang: "ko" | "en") => {
+  const t = LANG_DICT[lang];
+  const nameLower = colName.toLowerCase();
+  if (nameLower === "emp_id" || nameLower === "id") return t.colEmpId;
+  if (nameLower === "region" || nameLower === "dept" || nameLower === "department") return t.colRegion;
+  if (nameLower === "rep" || nameLower === "name") return t.colRep;
+  if (nameLower === "sales") return t.colSales;
+  if (nameLower === "status") return t.colStatus;
+  return label || colName;
+};
+
 export default function GridPreview({
   parsedData,
   gridData,
@@ -98,6 +289,10 @@ export default function GridPreview({
     data: { [key: string]: string };
   }
   const [deleteBuffer, setDeleteBuffer] = React.useState<DeletedRowInfo[]>([]);
+
+  // [Day 41 작업] 다국어 선택 상태 및 단방향 데이터 바인딩 자원 객체
+  const [currentLanguage, setCurrentLanguage] = React.useState<"ko" | "en">("ko");
+  const t = LANG_DICT[currentLanguage];
 
   // [Day 39 작업] 디테일 뷰포트 상태 및 삭제 버퍼 선언
   const [detailData, setDetailData] = React.useState<{ [empId: string]: DetailRow[] }>(() => {
@@ -241,8 +436,9 @@ export default function GridPreview({
   // [Day 35 작업] 실시간 유효성 검증(Validation) 및 레거시 ItemChanged / dw_1.Find() 대치 로직
   const [validationErrors, setValidationErrors] = React.useState<{ [rowIndex: number]: string }>({});
 
-  const validateGridData = React.useCallback((data: Array<{ [key: string]: string }>) => {
+  const validateGridData = React.useCallback((data: Array<{ [key: string]: string }>, lang: "ko" | "en") => {
     const errors: { [rowIndex: number]: string } = {};
+    const dict = LANG_DICT[lang];
     
     data.forEach((row, idx) => {
       if (row.row_status === "New") {
@@ -254,15 +450,15 @@ export default function GridPreview({
       const empId = row.emp_id ?? row.id ?? "";
 
       if (!empId.trim()) {
-        errors[idx] = `[VALIDATION ERROR] ${idx + 1}번째 행의 필수 항목인 '사번'이 누락되었습니다.`;
+        errors[idx] = dict.validationErrEmpId.replace("{row}", String(idx + 1));
         return;
       }
       if (!empName.trim()) {
-        errors[idx] = `[VALIDATION ERROR] ${idx + 1}번째 행의 필수 항목인 '사원명'이 누락되었습니다.`;
+        errors[idx] = dict.validationErrName.replace("{row}", String(idx + 1));
         return;
       }
       if (!deptName.trim()) {
-        errors[idx] = `[VALIDATION ERROR] ${idx + 1}번째 행의 필수 항목인 '부서명'이 누락되었습니다.`;
+        errors[idx] = dict.validationErrDept.replace("{row}", String(idx + 1));
         return;
       }
 
@@ -270,7 +466,7 @@ export default function GridPreview({
       if (salesVal.trim()) {
         const cleanSales = salesVal.replace(/,/g, "");
         if (isNaN(Number(cleanSales))) {
-          errors[idx] = `[VALIDATION ERROR] ${idx + 1}번째 행의 실적(Sales) 필드가 올바른 숫자 형식이 아닙니다.`;
+          errors[idx] = dict.validationErrSales.replace("{row}", String(idx + 1));
           return;
         }
       }
@@ -281,8 +477,8 @@ export default function GridPreview({
 
   // gridData의 변경을 실시간으로 감시하여 유효성 검증 수행
   React.useEffect(() => {
-    validateGridData(gridData);
-  }, [gridData, validateGridData]);
+    validateGridData(gridData, currentLanguage);
+  }, [gridData, currentLanguage, validateGridData]);
 
   // 실시간 에러 발생 시 하단 터미널에 에러 문구를 실시간 스트리밍 출력
   React.useEffect(() => {
@@ -440,8 +636,8 @@ export default function GridPreview({
       }
 
       return nextDirection === "asc"
-        ? valA.localeCompare(valB, "ko", { numeric: true })
-        : valB.localeCompare(valA, "ko", { numeric: true });
+        ? valA.localeCompare(valB, currentLanguage, { numeric: true })
+        : valB.localeCompare(valA, currentLanguage, { numeric: true });
     };
 
     const sortedGridData = [...gridData].sort(compareFn);
@@ -799,7 +995,7 @@ export default function GridPreview({
       setDumpOutput(
         JSON.stringify(
           {
-            message: "변경사항이 존재하지 않습니다.",
+            message: t.noChangesDump,
             status: "NO_CHANGES",
             timestamp: new Date().toISOString(),
           },
@@ -852,7 +1048,7 @@ export default function GridPreview({
       setDumpOutput(
         JSON.stringify(
           {
-            message: "최종 반영할 변경사항이 존재하지 않습니다.",
+            message: t.noChanges,
             status: "NO_CHANGES",
             timestamp: new Date().toISOString(),
           },
@@ -923,7 +1119,7 @@ export default function GridPreview({
         setDumpOutput(
           JSON.stringify(
             {
-              message: "DB 트랜잭션 커밋 완료! (SQLCA.SQLCode = 0)",
+              message: t.commitSuccessMsg,
               status: "COMMITTED",
               committed_rows_count: packet.length,
               timestamp: new Date().toISOString(),
@@ -999,7 +1195,7 @@ export default function GridPreview({
       {showCommitToast && (
         <div className="fixed top-6 right-6 bg-slate-950/95 border border-emerald-500 text-emerald-400 px-5 py-3 rounded-xl text-sm font-bold shadow-[0_0_20px_rgba(16,185,129,0.6)] animate-bounce z-50 flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-          <span>DB 트랜잭션 커밋 완료! 🔗</span>
+          <span>{t.toastCommitSuccess}</span>
         </div>
       )}
 
@@ -1007,7 +1203,7 @@ export default function GridPreview({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 flex-wrap">
           <h3 className="text-sm font-bold text-white">
-            💻 웹 변환 화면 프리뷰 (Grid Preview)
+            {t.title}
           </h3>
           <span
             className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border transition-all ${
@@ -1017,15 +1213,15 @@ export default function GridPreview({
             }`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${modifiedRowsCount > 0 ? "bg-emerald-400" : "bg-slate-600"}`}></span>
-            수정 중인 행: {modifiedRowsCount}건
+            {t.modifiedCount.replace("{count}", String(modifiedRowsCount))}
           </span>
           {/* [Day 36 작업] 다크 네온 스타일 행 추가 및 행 삭제 버튼 */}
           <button
             onClick={handleInsertRow}
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold border border-cyan-500/30 bg-cyan-950/80 text-cyan-400 hover:bg-cyan-900/50 hover:text-cyan-300 hover:shadow-[0_0_8px_rgba(34,211,238,0.4)] transition-all cursor-pointer"
-            title="새 공백 데이터 행을 추가합니다 (dw_1.InsertRow)."
+            title={t.tooltipAddRow}
           >
-            행 추가 ➕
+            {t.btnAddRow}
           </button>
           <button
             onClick={handleDeleteRow}
@@ -1035,9 +1231,9 @@ export default function GridPreview({
                 ? "border-pink-500/30 bg-pink-950/80 text-pink-400 hover:bg-pink-900/50 hover:text-pink-300 hover:shadow-[0_0_8px_rgba(244,63,94,0.4)] cursor-pointer"
                 : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
             }`}
-            title="현재 선택된 행을 즉시 삭제합니다 (dw_1.DeleteRow)."
+            title={t.tooltipDeleteRow}
           >
-            행 삭제 ➖
+            {t.btnDeleteRow}
           </button>
           {/* 전체 수정 데이터 일괄 초기화 버튼 */}
           <button
@@ -1048,17 +1244,17 @@ export default function GridPreview({
                 ? "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white cursor-pointer"
                 : "bg-slate-950 border-slate-900 text-slate-700 cursor-not-allowed"
             }`}
-            title="모든 변경 사항을 최초 데모 데이터 상태로 초기화합니다."
+            title={t.tooltipResetAll}
           >
-            전체 초기화 ↺
+            {t.btnResetAll}
           </button>
           {/* 저장 및 데이터 추출 버튼 */}
           <button
             onClick={handleSaveAndExtract}
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold border border-emerald-500/30 bg-emerald-950/80 text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300 transition-all cursor-pointer"
-            title="변경된 데이터셋을 JSON 패킷으로 추출합니다."
+            title={t.tooltipSaveExtract}
           >
-            저장 및 데이터 추출 💾
+            {t.btnSaveExtract}
           </button>
           {/* [Day 40 작업] 최종 DB 반영 비동기 Update 실행 버튼 */}
           <button
@@ -1071,17 +1267,30 @@ export default function GridPreview({
                 ? "border-emerald-500 bg-emerald-950/80 text-emerald-400 hover:bg-emerald-900/50 hover:text-emerald-300 hover:shadow-[0_0_15px_rgba(16,185,129,0.6)] shadow-[0_0_8px_rgba(16,185,129,0.3)] cursor-pointer"
                 : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
             }`}
-            title="변경된 데이터셋을 서버에 비동기 송출하고 최종 DB 커밋을 완료합니다."
+            title={t.tooltipFinalCommit}
           >
             {isUpdating ? (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                <span>서버 반영 중...</span>
+                <span>{t.updating}</span>
               </>
             ) : (
-              <span>최종 DB 반영 🚀</span>
+              <span>{t.btnFinalCommit}</span>
             )}
           </button>
+        </div>
+
+        {/* [Day 41 작업] 다크 네온 스타일 [🌐 언어 선택] 토글/드롭다운 */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono font-bold text-cyan-400 animate-pulse">🌐</span>
+          <select
+            value={currentLanguage}
+            onChange={(e) => setCurrentLanguage(e.target.value as "ko" | "en")}
+            className="bg-slate-950 border border-cyan-500/30 hover:border-cyan-400 focus:border-cyan-400 text-xs text-cyan-400 font-bold rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-all cursor-pointer shadow-[0_0_8px_rgba(34,211,238,0.2)]"
+          >
+            <option value="ko">한국어 (Korean)</option>
+            <option value="en">English ([ˈɪŋɡlɪʃ])</option>
+          </select>
         </div>
       </div>
 
@@ -1092,24 +1301,24 @@ export default function GridPreview({
 
         <div className="flex items-center gap-4 flex-wrap z-10">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono text-indigo-400 font-bold uppercase tracking-wider">as_dept</span>
+            <span className="text-[10px] font-mono text-indigo-400 font-bold uppercase tracking-wider">{t.deptLabel}</span>
             <select
               value={selectedDept}
               onChange={(e) => setSelectedDept(e.target.value)}
               className="bg-slate-950 border border-slate-800 hover:border-indigo-500/50 focus:border-indigo-500 text-xs text-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all cursor-pointer"
             >
-              <option value="전체">전체 부서</option>
-              <option value="개발팀">개발팀 (R&D)</option>
-              <option value="영업팀">영업팀 (Sales)</option>
-              <option value="인사팀">인사팀 (HR)</option>
+              <option value="전체">{t.deptAll}</option>
+              <option value="개발팀">{t.deptDev}</option>
+              <option value="영업팀">{t.deptSales}</option>
+              <option value="인사팀">{t.deptHR}</option>
             </select>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono text-indigo-400 font-bold uppercase tracking-wider">as_keyword</span>
+            <span className="text-[10px] font-mono text-indigo-400 font-bold uppercase tracking-wider">{t.keywordLabel}</span>
             <input
               type="text"
-              placeholder="사원명 또는 사번 입력..."
+              placeholder={t.keywordPlaceholder}
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
               onKeyDown={(e) => {
@@ -1127,7 +1336,7 @@ export default function GridPreview({
           disabled={isLoading}
           className="inline-flex items-center gap-1.5 px-4.5 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 bg-[length:200%_auto] hover:bg-right hover:scale-[1.02] text-xs text-white font-extrabold rounded shadow-[0_0_12px_rgba(99,102,241,0.35)] hover:shadow-[0_0_20px_rgba(16,185,129,0.6)] border border-indigo-500/20 active:scale-95 transition-all duration-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed z-10"
         >
-          <span>조회</span>
+          <span>{t.btnRetrieve.replace("🔍", "").trim()}</span>
           <span>🔍</span>
         </button>
       </div>
@@ -1136,13 +1345,13 @@ export default function GridPreview({
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0a0f1d]/90 border border-cyan-950/60 rounded-xl shadow-lg relative overflow-hidden">
         <div className="absolute -top-10 -left-10 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none"></div>
         <div className="flex items-center gap-2 z-10">
-          <span className="text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider">dw_1.Filter()</span>
-          <span className="text-xs text-slate-300 font-bold">결과 내 실시간 필터링 🔍</span>
+          <span className="text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider">{t.filterLabel}</span>
+          <span className="text-xs text-slate-300 font-bold">{t.filterTitle}</span>
         </div>
         <div className="relative flex items-center z-10 w-full sm:w-72">
           <input
             type="text"
-            placeholder="필터 키워드 입력 (전체 컬럼 검색)..."
+            placeholder={t.filterPlaceholder}
             value={filterKeyword}
             onChange={(e) => setFilterKeyword(e.target.value)}
             className="bg-slate-950 border border-slate-800 hover:border-cyan-500/50 focus:border-cyan-500 text-xs text-slate-300 placeholder-slate-600 rounded px-3 py-1.5 w-full focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-all pl-8 shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)]"
@@ -1152,7 +1361,7 @@ export default function GridPreview({
             <button
               onClick={() => setFilterKeyword("")}
               className="absolute right-2 text-xs text-slate-500 hover:text-slate-300 focus:outline-none cursor-pointer"
-              title="필터 키워드 초기화"
+              title={currentLanguage === "ko" ? "필터 키워드 초기화" : "Clear Filter"}
             >
               ✕
             </button>
@@ -1167,8 +1376,8 @@ export default function GridPreview({
           <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex flex-col items-center justify-center gap-3 z-30 transition-all">
             <div className="w-9 h-9 rounded-full border-[3px] border-indigo-500/10 border-t-indigo-500 animate-spin shadow-[0_0_15px_rgba(99,102,241,0.4)]"></div>
             <div className="flex flex-col items-center gap-0.5">
-              <span className="text-xs font-bold text-indigo-400 tracking-wide animate-pulse">데이터 조회 중...</span>
-              <span className="text-[9px] font-mono text-slate-500">Retrieving...</span>
+              <span className="text-xs font-bold text-indigo-400 tracking-wide animate-pulse">{t.loading}</span>
+              <span className="text-[9px] font-mono text-slate-500">{t.loadingSub}</span>
             </div>
           </div>
         )}
@@ -1187,7 +1396,7 @@ export default function GridPreview({
                 className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
                 style={{ width: "48px", left: 0 }}
               >
-                No.
+                {t.colNo}
               </th>
               {(parsedData.columns || []).map((c, i) => {
                 const isFrozen = i < 2; // 맨 앞 2개 핵심 컬럼 고정
@@ -1207,10 +1416,10 @@ export default function GridPreview({
                       width: `${columnWidths[c.name] || 150}px`,
                       left: leftOffset,
                     }}
-                    title="클릭하여 순환 정렬 (기본값 ➔ 오름차순 ➔ 내림차순)"
+                    title={t.tooltipSort}
                   >
                     <div className="flex items-center justify-between gap-2 mr-2">
-                      <span>{c.label || c.name}</span>
+                      <span>{translateColLabel(c.name, c.label || "", currentLanguage)}</span>
                       <span
                         className={`text-[9px] font-bold px-1 py-0.5 rounded transition-all duration-300 ${
                           sortConfig.key === c.name && sortConfig.direction !== "none"
@@ -1233,7 +1442,7 @@ export default function GridPreview({
                     <div
                       onMouseDown={(e) => handleResizeStart(c.name, e)}
                       className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
-                      title="드래그하여 너비 조절"
+                      title={t.tooltipResize}
                     />
                   </th>
                 );
@@ -1251,12 +1460,12 @@ export default function GridPreview({
                   <div
                     onMouseDown={(e) => handleResizeStart(comp.name, e)}
                     className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
-                    title="드래그하여 너비 조절"
+                    title={t.tooltipResize}
                   />
                 </th>
               ))}
               <th className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900" style={{ width: "80px" }}>
-                제어
+                {t.colControl}
               </th>
             </tr>
           </thead>
@@ -1264,13 +1473,13 @@ export default function GridPreview({
             {gridData.length === 0 ? (
               <tr>
                 <td colSpan={(parsedData.columns?.length || 0) + (parsedData.computedFields?.length || 0) + 2} className="p-8 text-center text-slate-500 italic">
-                  조회 결과 데이터가 존재하지 않습니다. 상단 조건바에서 조회해 주십시오.
+                  {t.noData}
                 </td>
               </tr>
             ) : filteredRows.length === 0 ? (
               <tr>
                 <td colSpan={(parsedData.columns?.length || 0) + (parsedData.computedFields?.length || 0) + 2} className="p-8 text-center text-cyan-400 bg-slate-950/80 border border-cyan-900/30 font-medium italic">
-                  🔍 필터링 조건에 부합하는 데이터가 존재하지 않습니다. (검색어: &quot;{filterKeyword}&quot;)
+                  {t.noFilteredData.replace("{keyword}", filterKeyword)}
                 </td>
               </tr>
             ) : (
@@ -1622,9 +1831,9 @@ export default function GridPreview({
                         <button
                           onClick={() => handleUndoRow(rIdx)}
                           className="px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 hover:text-amber-400 border border-amber-500/20 rounded text-[10px] font-bold transition-all opacity-70 animate-pulse cursor-pointer"
-                          title="이 행의 수정을 취소하고 원래 상태로 되돌립니다."
+                          title={t.tooltipUndo}
                         >
-                          원복
+                          {t.undo}
                         </button>
                       )}
                     </td>
@@ -1644,7 +1853,7 @@ export default function GridPreview({
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span>
             <h4 className="text-xs font-bold text-pink-400 font-mono tracking-wide">
-              [상세 내역 (Detail View) - 사원번호: {currentEmpId || "선택 없음"}]
+              {t.detailTitle.replace("{empId}", currentEmpId || (currentLanguage === "ko" ? "선택 없음" : "None"))}
             </h4>
           </div>
           <div className="flex items-center gap-2">
@@ -1656,9 +1865,9 @@ export default function GridPreview({
                   ? "border-pink-500/30 bg-pink-950/80 text-pink-400 hover:bg-pink-900/50 hover:text-pink-300 hover:shadow-[0_0_8px_rgba(244,63,94,0.4)] cursor-pointer"
                   : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
               }`}
-              title="현재 마스터에 예속된 새로운 상세 데이터 행을 추가합니다 (dw_detail.InsertRow)."
+              title={t.tooltipDetailAdd}
             >
-              상세 추가 ➕
+              {t.btnDetailAdd}
             </button>
             <button
               onClick={handleDeleteDetailRow}
@@ -1668,9 +1877,9 @@ export default function GridPreview({
                   ? "border-purple-500/30 bg-purple-950/80 text-purple-400 hover:bg-purple-900/50 hover:text-purple-300 hover:shadow-[0_0_8px_rgba(168,85,247,0.4)] cursor-pointer"
                   : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
               }`}
-              title="선택된 상세 데이터를 삭제합니다 (dw_detail.DeleteRow)."
+              title={t.tooltipDetailDelete}
             >
-              상세 삭제 ➖
+              {t.btnDetailDelete}
             </button>
           </div>
         </div>
@@ -1679,24 +1888,24 @@ export default function GridPreview({
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-[#120712] text-pink-500 font-bold sticky top-0 border-b border-pink-950/40 z-10">
               <tr>
-                <th className="p-2.5 text-center font-mono" style={{ width: "80px" }}>일련번호</th>
-                <th className="p-2.5 font-mono">관계</th>
-                <th className="p-2.5 font-mono">이름</th>
-                <th className="p-2.5 font-mono">생년월일</th>
-                <th className="p-2.5 font-mono">비고</th>
+                <th className="p-2.5 text-center font-mono" style={{ width: "80px" }}>{t.detailSeq}</th>
+                <th className="p-2.5 font-mono">{t.detailRelation}</th>
+                <th className="p-2.5 font-mono">{t.detailName}</th>
+                <th className="p-2.5 font-mono">{t.detailBirth}</th>
+                <th className="p-2.5 font-mono">{t.detailNote}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-pink-950/20 text-slate-300 bg-slate-950/40">
               {!currentEmpId ? (
                 <tr>
                   <td colSpan={5} className="p-8 text-center text-slate-500 italic">
-                    마스터 그리드에서 직원을 선택해 주십시오.
+                    {t.detailSelectRow}
                   </td>
                 </tr>
               ) : !detailData[currentEmpId] || detailData[currentEmpId].length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-8 text-center text-slate-500 italic">
-                    등록된 상세 내역이 없습니다. [상세 추가] 버튼으로 등록해 주십시오.
+                    {t.detailNoData}
                   </td>
                 </tr>
               ) : (
@@ -1719,7 +1928,7 @@ export default function GridPreview({
                           value={detRow.relation}
                           onChange={(e) => handleDetailCellChange(detRow.seq, "relation", e.target.value)}
                           className="w-full bg-transparent px-2 py-1 text-xs border-0 text-white focus:outline-none focus:ring-1 focus:ring-pink-500 rounded"
-                          placeholder="예: 배우자, 자녀"
+                          placeholder={t.relationPlaceholder}
                         />
                       </td>
                       <td className="p-1">
@@ -1728,7 +1937,7 @@ export default function GridPreview({
                           value={detRow.name}
                           onChange={(e) => handleDetailCellChange(detRow.seq, "name", e.target.value)}
                           className="w-full bg-transparent px-2 py-1 text-xs border-0 text-white focus:outline-none focus:ring-1 focus:ring-pink-500 rounded"
-                          placeholder="이름 입력"
+                          placeholder={t.namePlaceholder}
                         />
                       </td>
                       <td className="p-1">
@@ -1751,7 +1960,7 @@ export default function GridPreview({
                           value={detRow.note}
                           onChange={(e) => handleDetailCellChange(detRow.seq, "note", e.target.value)}
                           className="w-full bg-transparent px-2 py-1 text-xs border-0 text-white focus:outline-none focus:ring-1 focus:ring-pink-500 rounded"
-                          placeholder="비고 입력"
+                          placeholder={t.notePlaceholder}
                         />
                       </td>
                     </tr>
@@ -1773,7 +1982,7 @@ export default function GridPreview({
           {copied && (
             <div className="absolute top-12 right-4 bg-emerald-950 text-emerald-300 border border-emerald-400/50 px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.5)] animate-bounce z-10 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-              <span>복사 완료! 📋</span>
+              <span>{t.copiedToast}</span>
             </div>
           )}
           <div className={`flex items-center justify-between border-b pb-2 ${
@@ -1787,8 +1996,8 @@ export default function GridPreview({
                 dumpOutput.includes("[VALIDATION ERROR]") ? "text-red-300" : "text-emerald-300"
               }`}>
                 {dumpOutput.includes("[VALIDATION ERROR]")
-                  ? "[VALIDATION ERROR LOG] - 실시간 데이터 유효성 검증 오류"
-                  : "[TRANSACTION DATA DUMP] - dw_1.Update() Buffer JSON Output"}
+                  ? t.valErrTitle
+                  : t.txDumpTitle}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -1797,16 +2006,16 @@ export default function GridPreview({
                   <button
                     onClick={handleCopyToClipboard}
                     className="text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/50 px-2.5 py-1 rounded border border-emerald-500/30 text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 hover:shadow-[0_0_8px_rgba(16,185,129,0.4)]"
-                    title="추출된 JSON 문자열을 클립보드에 원클릭 복사합니다."
+                    title={t.tooltipCopy}
                   >
-                    클립보드 복사 📋
+                    {t.btnCopy}
                   </button>
                   <button
                     onClick={handleDownloadJSON}
                     className="text-cyan-400 hover:text-cyan-300 bg-cyan-950/60 hover:bg-cyan-900/50 px-2.5 py-1 rounded border border-cyan-500/30 text-[10px] font-bold cursor-pointer transition-all flex items-center gap-1 hover:shadow-[0_0_8px_rgba(34,211,238,0.4)]"
-                    title="추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다."
+                    title={t.tooltipDownload}
                   >
-                    JSON 다운로드 💾
+                    {t.btnDownload}
                   </button>
                 </>
               )}
@@ -1818,7 +2027,7 @@ export default function GridPreview({
                     : "text-emerald-500 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 border-emerald-500/20"
                 }`}
               >
-                닫기 ✕
+                {t.btnClose}
               </button>
             </div>
           </div>
