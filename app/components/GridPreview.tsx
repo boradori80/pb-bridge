@@ -290,6 +290,10 @@ export default function GridPreview({
   }
   const [deleteBuffer, setDeleteBuffer] = React.useState<DeletedRowInfo[]>([]);
 
+  // [Day 42 작업] 컬럼 설정 ⚙️ 토글 상태 및 컬럼 가시성 상태 선언
+  const [showColumnSettings, setShowColumnSettings] = React.useState<boolean>(false);
+  const [visibleColumns, setVisibleColumns] = React.useState<Record<string, boolean>>({});
+
   // [Day 41 작업] 다국어 선택 상태 및 단방향 데이터 바인딩 자원 객체
   const [currentLanguage, setCurrentLanguage] = React.useState<"ko" | "en">("ko");
   const t = LANG_DICT[currentLanguage];
@@ -382,6 +386,27 @@ export default function GridPreview({
     });
   }, [parsedData]);
 
+  // [Day 42 작업] parsedData의 컬럼 정보를 기반으로 기본 가시성 상태 초기화
+  React.useEffect(() => {
+    setVisibleColumns((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      (parsedData.columns || []).forEach((c) => {
+        if (next[c.name] === undefined) {
+          next[c.name] = true;
+          changed = true;
+        }
+      });
+      (parsedData.computedFields || []).forEach((comp) => {
+        if (next[comp.name] === undefined) {
+          next[comp.name] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [parsedData]);
+
   // [Day 37 작업] 마우스 드래그를 통한 컬럼 너비 리사이징 이벤트 훅 및 제어 로직
   const handleResizeStart = (colKey: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -409,29 +434,69 @@ export default function GridPreview({
   };
 
   // [Day 37 작업] 컬럼 너비들의 합산으로 테이블의 전체 고정 폭 계산
+  // [Day 42 작업] visibleColumns에 기재된 활성화된 컬럼들만 합산하여 계산
   const totalTableWidth = React.useMemo(() => {
     let sum = 48 + 80;
     (parsedData.columns || []).forEach((c) => {
-      sum += columnWidths[c.name] || 150;
+      if (visibleColumns[c.name] !== false) {
+        sum += columnWidths[c.name] || 150;
+      }
     });
     (parsedData.computedFields || []).forEach((comp) => {
-      sum += columnWidths[comp.name] || 150;
+      if (visibleColumns[comp.name] !== false) {
+        sum += columnWidths[comp.name] || 150;
+      }
     });
     return sum;
-  }, [parsedData, columnWidths]);
+  }, [parsedData, columnWidths, visibleColumns]);
+
+  // [Day 42 작업] 노출되어 있는 고정 열들 중에서 가장 우측에 위치한 고정 열 식별
+  const visibleFrozenColumns = React.useMemo(() => {
+    return (parsedData.columns || [])
+      .slice(0, 2)
+      .filter((c) => visibleColumns[c.name] !== false);
+  }, [parsedData.columns, visibleColumns]);
 
   // [Day 38 작업] 파워빌더 고정 열(Fixed Columns) vs 웹 표준 CSS Sticky 및 React 동적 오프셋 비교 (교육용 주석)
+  // [Day 42 작업] 파워빌더 dw_1.Modify("column.Visible='0'") vs 현대 React의 선언형 가시성(Visibility [ˌvɪzəˈbɪləti]) 및 Sticky 레이아웃 동기화 아키텍처 비교
+  /*
+   * 1. 레거시 파워빌더 (C/S 환경):
+   *    - 파워빌더에서는 특정 컬럼을 숨기기 위해 `dw_1.Modify("column_name.Visible='0'")` 또는 `dw_1.Object.column_name.Visible = 0` 스크립트를 명령형(Imperative)으로 실행합니다.
+   *    - 컬럼이 보이지 않게 되면, 파워빌더 엔진은 화면 상의 절대 픽셀 좌표를 재계산하여 다른 컬럼들의 X 좌표를 당겨오지 못하므로 빈 공백(Gap)이 남거나,
+   *      이를 해결하기 위해 개발자가 스크립트 상에서 각 컬럼의 `.X` 및 `.Width` 속성을 루프를 돌며 동적으로 변경해주는 부가 연산이 필수적이었습니다.
+   *    - 이는 화면 디자인 레이아웃(Layout [ˈleɪaʊt])과 코드가 강하게 결합되어 스크립트 오류를 유발하기 쉬운 한계가 있었습니다.
+   *
+   * 2. 현대 웹 표준 React 아키텍처 (선언형 가시성 및 가상 돔 제어):
+   *    - React 환경에서는 컬럼의 가시성(Visibility [ˌvɪzəˈbɪləti]) 상태를 `visibleColumns` 로컬 State로 선언하고 관리합니다.
+   *    - 사용자가 체크박스를 토글(Toggle [ˈtɑːɡl])하여 컬럼의 가시성 상태가 변경되면, React는 가상 돔(Virtual DOM [ˈvɜːrtʃuəl dɒm])을 이용해 상태 변화를 감지하고,
+   *      실시간으로 가시성이 `false`가 된 헤더(`<th>`)와 데이터 셀(`<td>`)을 렌더링 트리에서 완전히 제외하는 조건부 렌더링을 수행합니다.
+   *    - 이때 복잡한 절대 좌표 변경 과정 없이 브라우저의 Flexbox/Table 자동 레이아웃 엔진이 너비를 스스로 재배치하며,
+   *      틀고정(Frozen) 열들의 누적 left 오프셋도 `getFrozenLeftOffset`과 `totalTableWidth` 계산식이 메모리에 상주 중인 `visibleColumns` 상태의
+   *      활성화된 컬럼들만 합산하여 유기적으로 반영되므로 틀고정 경계선이 한 픽셀의 오차도 없이 유연하게 달라붙게 됩니다.
+   *    - 리렌더링(Rerendering [riːˈrendərɪŋ]) 과정에서 DOM을 직접 조작하지 않고 데이터 상태와 뷰의 바인딩을 일치시킴으로써 뛰어난 성능과 설계의 분리(SoC)를 만족합니다.
+   */
   const getFrozenLeftOffset = React.useCallback((colIndex: number): number => {
     if (colIndex === -1) return 0; // 'No.' 열은 가장 첫 부분에 고정
     let offset = 48; // 'No.' 열의 고정 너비 (48px)
     for (let i = 0; i < colIndex; i++) {
       const colName = parsedData.columns[i]?.name;
       if (colName) {
-        offset += columnWidths[colName] || 150;
+        // [Day 42 작업] visibleColumns에 기재된 활성화된 컬럼들만 오프셋에 합산
+        const isVisible = visibleColumns[colName] !== false;
+        if (isVisible) {
+          offset += columnWidths[colName] || 150;
+        }
       }
     }
     return offset;
-  }, [parsedData.columns, columnWidths]);
+  }, [parsedData.columns, columnWidths, visibleColumns]);
+
+  // [Day 42 작업] 활성화된 전체 컬럼 개수 계산 (No. 및 제어 컬럼 제외)
+  const totalVisibleColSpan = React.useMemo(() => {
+    const visibleCols = (parsedData.columns || []).filter((c) => visibleColumns[c.name] !== false).length;
+    const visibleComps = (parsedData.computedFields || []).filter((comp) => visibleColumns[comp.name] !== false).length;
+    return visibleCols + visibleComps + 2; // No. + 제어 포함
+  }, [parsedData.columns, parsedData.computedFields, visibleColumns]);
 
   // [Day 35 작업] 실시간 유효성 검증(Validation) 및 레거시 ItemChanged / dw_1.Find() 대치 로직
   const [validationErrors, setValidationErrors] = React.useState<{ [rowIndex: number]: string }>({});
@@ -1280,17 +1345,78 @@ export default function GridPreview({
           </button>
         </div>
 
-        {/* [Day 41 작업] 다크 네온 스타일 [🌐 언어 선택] 토글/드롭다운 */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-bold text-cyan-400 animate-pulse">🌐</span>
-          <select
-            value={currentLanguage}
-            onChange={(e) => setCurrentLanguage(e.target.value as "ko" | "en")}
-            className="bg-slate-950 border border-cyan-500/30 hover:border-cyan-400 focus:border-cyan-400 text-xs text-cyan-400 font-bold rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-all cursor-pointer shadow-[0_0_8px_rgba(34,211,238,0.2)]"
-          >
-            <option value="ko">한국어 (Korean)</option>
-            <option value="en">English ([ˈɪŋɡlɪʃ])</option>
-          </select>
+        {/* [Day 41 작업] 다크 네온 스타일 [🌐 언어 선택] 토글/드롭다운 및 [컬럼 설정 ⚙️] */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono font-bold text-cyan-400 animate-pulse">🌐</span>
+            <select
+              value={currentLanguage}
+              onChange={(e) => setCurrentLanguage(e.target.value as "ko" | "en")}
+              className="bg-slate-950 border border-cyan-500/30 hover:border-cyan-400 focus:border-cyan-400 text-xs text-cyan-400 font-bold rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500/30 transition-all cursor-pointer shadow-[0_0_8px_rgba(34,211,238,0.2)]"
+            >
+              <option value="ko">한국어 (Korean)</option>
+              <option value="en">English ([ˈɪŋɡlɪʃ])</option>
+            </select>
+          </div>
+
+          {/* [Day 42 작업] 다크 네온 스타일 [컬럼 설정 ⚙️] 미니 레이아웃 */}
+          <div className="relative">
+            <button
+              onClick={() => setShowColumnSettings(!showColumnSettings)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold border border-cyan-500/30 bg-slate-950 text-cyan-400 hover:bg-cyan-900/40 hover:text-cyan-300 hover:shadow-[0_0_8px_rgba(34,211,238,0.3)] transition-all cursor-pointer shadow-[0_0_8px_rgba(34,211,238,0.1)]"
+            >
+              <span>컬럼 설정 ⚙️</span>
+            </button>
+            {showColumnSettings && (
+              <div className="absolute right-0 mt-2 w-56 bg-slate-950/95 border border-cyan-500/30 rounded-xl p-3 shadow-[0_4px_20px_rgba(34,211,238,0.2)] z-40 flex flex-col gap-2 backdrop-blur-md">
+                <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase tracking-wider border-b border-cyan-950/60 pb-1.5 mb-1 flex items-center justify-between">
+                  <span>Column Visibility</span>
+                  <button 
+                    onClick={() => setShowColumnSettings(false)}
+                    className="text-slate-500 hover:text-cyan-400 text-xs focus:outline-none"
+                  >
+                    ✕
+                  </button>
+                </span>
+                <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto scrollbar-thin pr-1">
+                  {(parsedData.columns || []).map((c) => (
+                    <label key={c.name} className="flex items-center gap-2 text-[11px] font-mono text-slate-300 hover:text-cyan-300 cursor-pointer select-none py-0.5">
+                      <input
+                        type="checkbox"
+                        checked={visibleColumns[c.name] !== false}
+                        onChange={(e) => {
+                          const val = e.target.checked;
+                          setVisibleColumns(prev => ({
+                            ...prev,
+                            [c.name]: val
+                          }));
+                        }}
+                        className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-cyan-500"
+                      />
+                      <span>{translateColLabel(c.name, c.label || "", currentLanguage)}</span>
+                    </label>
+                  ))}
+                  {(parsedData.computedFields || []).map((comp) => (
+                    <label key={comp.name} className="flex items-center gap-2 text-[11px] font-mono text-amber-400 hover:text-amber-300 cursor-pointer select-none py-0.5">
+                      <input
+                        type="checkbox"
+                        checked={visibleColumns[comp.name] !== false}
+                        onChange={(e) => {
+                          const val = e.target.checked;
+                          setVisibleColumns(prev => ({
+                            ...prev,
+                            [comp.name]: val
+                          }));
+                        }}
+                        className="rounded border-slate-800 bg-slate-950 text-amber-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-amber-500"
+                      />
+                      <span>🧮 {comp.label || comp.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1399,9 +1525,11 @@ export default function GridPreview({
                 {t.colNo}
               </th>
               {(parsedData.columns || []).map((c, i) => {
+                if (visibleColumns[c.name] === false) return null; // [Day 42 작업] 컬럼 숨김 적용
                 const isFrozen = i < 2; // 맨 앞 2개 핵심 컬럼 고정
                 const leftOffset = isFrozen ? getFrozenLeftOffset(i) : undefined;
-                const isLastFrozen = i === 1; // 마지막 고정 열 우측 경계선 처리
+                // [Day 42 작업] 노출되어 있는 고정 열들 중에서 가장 우측에 위치한 고정 열 식별
+                const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === c.name;
 
                 return (
                   <th
@@ -1447,23 +1575,26 @@ export default function GridPreview({
                   </th>
                 );
               })}
-              {(parsedData.computedFields || []).map((comp, i) => (
-                <th
-                  key={i}
-                  className="p-3 text-amber-400 bg-indigo-950/20 relative group select-none"
-                  style={{ width: `${columnWidths[comp.name] || 150}px` }}
-                >
-                  <div className="flex items-center gap-2 mr-2">
-                    <span>🧮 {comp.label || comp.name}</span>
-                  </div>
-                  {/* [Day 37 작업] 계산식 컬럼 Resizing을 위한 다크 네온 스타일의 리사이저 핸들 포인트 */}
-                  <div
-                    onMouseDown={(e) => handleResizeStart(comp.name, e)}
-                    className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
-                    title={t.tooltipResize}
-                  />
-                </th>
-              ))}
+              {(parsedData.computedFields || []).map((comp, i) => {
+                if (visibleColumns[comp.name] === false) return null; // [Day 42 작업] 계산식 컬럼 숨김 적용
+                return (
+                  <th
+                    key={i}
+                    className="p-3 text-amber-400 bg-indigo-950/20 relative group select-none"
+                    style={{ width: `${columnWidths[comp.name] || 150}px` }}
+                  >
+                    <div className="flex items-center gap-2 mr-2">
+                      <span>🧮 {comp.label || comp.name}</span>
+                    </div>
+                    {/* [Day 37 작업] 계산식 컬럼 Resizing을 위한 다크 네온 스타일의 리사이저 핸들 포인트 */}
+                    <div
+                      onMouseDown={(e) => handleResizeStart(comp.name, e)}
+                      className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                      title={t.tooltipResize}
+                    />
+                  </th>
+                );
+              })}
               <th className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900" style={{ width: "80px" }}>
                 {t.colControl}
               </th>
@@ -1472,13 +1603,13 @@ export default function GridPreview({
           <tbody className="divide-y divide-slate-900 text-slate-300">
             {gridData.length === 0 ? (
               <tr>
-                <td colSpan={(parsedData.columns?.length || 0) + (parsedData.computedFields?.length || 0) + 2} className="p-8 text-center text-slate-500 italic">
+                <td colSpan={totalVisibleColSpan} className="p-8 text-center text-slate-500 italic">
                   {t.noData}
                 </td>
               </tr>
             ) : filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={(parsedData.columns?.length || 0) + (parsedData.computedFields?.length || 0) + 2} className="p-8 text-center text-cyan-400 bg-slate-950/80 border border-cyan-900/30 font-medium italic">
+                <td colSpan={totalVisibleColSpan} className="p-8 text-center text-cyan-400 bg-slate-950/80 border border-cyan-900/30 font-medium italic">
                   {t.noFilteredData.replace("{keyword}", filterKeyword)}
                 </td>
               </tr>
@@ -1537,6 +1668,7 @@ export default function GridPreview({
                       {fIdx + 1}
                     </td>
                     {(parsedData.columns || []).map((col, cIdx) => {
+                      if (visibleColumns[col.name] === false) return null; // [Day 42 작업] 컬럼 숨김 적용
                       let isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
                       
                       if (col.protect && col.protect.toLowerCase().includes("if")) {
@@ -1554,7 +1686,8 @@ export default function GridPreview({
 
                       const isFrozen = cIdx < 2;
                       const leftOffset = isFrozen ? getFrozenLeftOffset(cIdx) : undefined;
-                      const isLastFrozen = cIdx === 1;
+                      // [Day 42 작업] 노출되어 있는 고정 열들 중에서 가장 우측에 위치한 고정 열 식별
+                      const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
 
                       const renderGridCellInput = () => {
                         const baseClass =
@@ -1800,6 +1933,7 @@ export default function GridPreview({
                       );
                     })}
                     {(parsedData.computedFields || []).map((comp, cpIdx) => {
+                      if (visibleColumns[comp.name] === false) return null; // [Day 42 작업] 계산식 컬럼 숨김 적용
                       const mergedColumns = [
                         ...parsedData.columns,
                         ...(parsedData.arguments || []).map((arg) => ({
