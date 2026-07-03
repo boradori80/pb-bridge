@@ -185,7 +185,9 @@ const LANG_DICT = {
     tooltipDetailAdd: "현재 마스터에 예속된 새로운 상세 데이터 행을 추가합니다 (dw_detail.InsertRow).",
     tooltipDetailDelete: "선택된 상세 데이터를 삭제합니다 (dw_detail.DeleteRow).",
     tooltipCopy: "추출된 JSON 문자열을 클립보드에 원클릭 복사합니다.",
-    tooltipDownload: "추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다."
+    tooltipDownload: "추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다.",
+    btnPrint: "보고서 인쇄 🖨️",
+    tooltipPrint: "현재 화면을 규격에 맞춰 인쇄합니다 (dw_1.Print)."
   },
   en: {
     title: "💻 Web-Converted [ɡrɪd] [ˈpriːvjuː]",
@@ -259,7 +261,9 @@ const LANG_DICT = {
     tooltipDetailAdd: "Add a new detail data row subordinate to the current master (dw_detail.InsertRow).",
     tooltipDetailDelete: "Delete the selected detail data (dw_detail.DeleteRow).",
     tooltipCopy: "Copy the extracted JSON string to the clipboard with one click.",
-    tooltipDownload: "Download the extracted JSON file to the local disk immediately."
+    tooltipDownload: "Download the extracted JSON file to the local disk immediately.",
+    btnPrint: "Print Report [prɪnt] 🖨️",
+    tooltipPrint: "Print the report page using native [prɪnt] API."
   }
 };
 
@@ -1207,6 +1211,29 @@ export default function GridPreview({
     }
   };
 
+  // [Day 43 작업] 브라우저 네이티브 인쇄 팝업 호출 핸들러
+  /*
+   * [레거시 파워빌더 dw_1.Print() vs 현대 웹 표준 브라우저 인쇄 API 아키텍처 비교]
+   *
+   * 1. 레거시 파워빌더 (C/S 환경):
+   *    - 파워빌더에서 `dw_1.Print(true)`를 호출하면 클라이언트 OS의 프린터 스풀러(Printer Spooler)와
+   *      직접 동기식(Synchronous) 통신을 수립하여 인쇄 작업을 큐에 밀어 넣습니다.
+   *    - Print Preview 속성을 활성화하면 화면 디스플레이용 데이터윈도우 엔진을 인쇄 페이지 가상 뷰어로 일시 전환하여
+   *      임시 레이아웃을 제어하는 구조였습니다.
+   *    - 이 방식은 클라이언트 로컬 드라이버 의존성이 크며 동기식 제어로 인해 인쇄 스풀링 중 화면이 멈추는 현상이 존재했습니다.
+   *
+   * 2. 현대 웹 표준 React 아키텍처 (선언형 DOM 인쇄 뷰 및 비차단 Print API):
+   *    - 웹 환경에서는 비차단(Non-blocking) 방식의 브라우저 표준 API인 `window.print()`를 사용합니다.
+   *    - 화면 레이아웃의 변환은 명령형 스크립트로 픽셀을 재계산하는 대신, CSS `@media print` 스타일 미디어 쿼리를 정의하여
+   *      인쇄 모드(Print Mode, [prɪnt] [moʊd]) 진입 시 브라우저 렌더링 엔진이 선언적으로 스타일을 재조정하도록 유도합니다.
+   *    - 이를 통해 불필요한 컨트롤 요소를 DOM 트리에서 제거하거나 보이지 않게 처리(`print:hidden`)하고,
+   *      스크롤 영역의 제한을 해제(`max-h-none`, `overflow-visible`)하여 A4 가로/세로 영역에 맞게 모든 행이 종이에 고르게 출력되도록 제어합니다.
+   *    - 또한 기존 다크 테마를 흰색 배경에 선명한 검은색 격자선으로 실시간 맵핑하여 ERP 보고서 규격으로 자동 레이아웃 변환을 수행합니다.
+   */
+  const handlePrintReport = () => {
+    window.print();
+  };
+
   // [Day 24 작업] 단 하나의 컬럼이라도 값의 변동이 생겼는지 감지하는 판별 로직 (isRowModified)
   const isRowModified = (currentRow: { [key: string]: string }, rIdx: number): boolean => {
     const originalRow = initialGridDataRef.current[rIdx];
@@ -1255,7 +1282,58 @@ export default function GridPreview({
   }, [gridData, deleteBuffer, detailData, detailDeleteBuffer]);
 
   return (
-    <section className="bg-slate-950/80 border border-slate-900 rounded-2xl overflow-hidden shadow-2xl p-5 flex flex-col gap-4 relative">
+    <section className="bg-slate-950/80 border border-slate-900 rounded-2xl overflow-hidden shadow-2xl p-5 flex flex-col gap-4 relative print:p-0 print:border-none print:shadow-none print:bg-white print:text-black">
+      {/* [Day 43 작업] 인쇄 전용 전역 스타일 정의 */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 15mm;
+          }
+          html, body {
+            background: #ffffff !important;
+            color: #000000 !important;
+          }
+          /* 스크롤 제거 및 잘림 방지 */
+          .overflow-x-auto, .overflow-y-auto {
+            overflow: visible !important;
+            max-height: none !important;
+            min-height: auto !important;
+          }
+          table {
+            width: 100% !important;
+            table-layout: auto !important; /* A4 용지 가로 폭 피팅 */
+            border-collapse: collapse !important;
+          }
+          /* 다크 테마 완전 제거 및 검은색 격자선 */
+          table, th, td, tr {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+            border: 1px solid #000000 !important;
+            box-shadow: none !important;
+          }
+          th {
+            font-weight: bold !important;
+            background-color: #f3f4f6 !important;
+          }
+          input, select {
+            background: transparent !important;
+            color: #000000 !important;
+            border: none !important;
+            box-shadow: none !important;
+            outline: none !important;
+          }
+          /* Sticky 포지션 해제 */
+          .sticky {
+            position: static !important;
+          }
+          .border-r-2 {
+            border-right-width: 1px !important;
+            border-color: #000000 !important;
+          }
+        }
+      `}} />
+
       {/* [Day 40 작업] DB 트랜잭션 커밋 완료 녹색 네온 토스트 알림 */}
       {showCommitToast && (
         <div className="fixed top-6 right-6 bg-slate-950/95 border border-emerald-500 text-emerald-400 px-5 py-3 rounded-xl text-sm font-bold shadow-[0_0_20px_rgba(16,185,129,0.6)] animate-bounce z-50 flex items-center gap-2">
@@ -1325,7 +1403,7 @@ export default function GridPreview({
           <button
             onClick={handleFinalCommit}
             disabled={isUpdating || modifiedRowsCount === 0}
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold border transition-all ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold border transition-all print:hidden ${
               isUpdating
                 ? "bg-emerald-950/40 border-emerald-500/20 text-emerald-500/60 cursor-not-allowed"
                 : modifiedRowsCount > 0
@@ -1343,10 +1421,18 @@ export default function GridPreview({
               <span>{t.btnFinalCommit}</span>
             )}
           </button>
+          {/* [Day 43 작업] 보고서 인쇄 🖨️ 버튼 배치 */}
+          <button
+            onClick={handlePrintReport}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold border border-cyan-500 bg-cyan-950/80 text-cyan-400 hover:bg-cyan-900/50 hover:text-cyan-300 hover:shadow-[0_0_15px_rgba(34,211,238,0.6)] shadow-[0_0_8px_rgba(34,211,238,0.3)] transition-all cursor-pointer print:hidden"
+            title={t.tooltipPrint}
+          >
+            <span>{t.btnPrint}</span>
+          </button>
         </div>
 
         {/* [Day 41 작업] 다크 네온 스타일 [🌐 언어 선택] 토글/드롭다운 및 [컬럼 설정 ⚙️] */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap print:hidden">
           <div className="flex items-center gap-2">
             <span className="text-xs font-mono font-bold text-cyan-400 animate-pulse">🌐</span>
             <select
@@ -1421,7 +1507,7 @@ export default function GridPreview({
       </div>
 
       {/* [Day 32 작업] 파워빌더 Retrieval Argument 아규먼트 입력을 상징하는 다크 네온 스타일 조회 조건 바 */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0d1527]/90 border border-indigo-950/60 rounded-xl shadow-lg relative overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0d1527]/90 border border-indigo-950/60 rounded-xl shadow-lg relative overflow-hidden print:hidden">
         <div className="absolute -top-10 -left-10 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none"></div>
         <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl pointer-events-none"></div>
 
@@ -1468,7 +1554,7 @@ export default function GridPreview({
       </div>
 
       {/* [Day 34 작업] 결과 내 필터링 인풋 입력 UI 컴포넌트 추가 (다크 네온 디자인) */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0a0f1d]/90 border border-cyan-950/60 rounded-xl shadow-lg relative overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0a0f1d]/90 border border-cyan-950/60 rounded-xl shadow-lg relative overflow-hidden print:hidden">
         <div className="absolute -top-10 -left-10 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none"></div>
         <div className="flex items-center gap-2 z-10">
           <span className="text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider">{t.filterLabel}</span>
@@ -1595,7 +1681,7 @@ export default function GridPreview({
                   </th>
                 );
               })}
-              <th className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900" style={{ width: "80px" }}>
+              <th className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900 print:hidden" style={{ width: "80px" }}>
                 {t.colControl}
               </th>
             </tr>
@@ -1960,7 +2046,7 @@ export default function GridPreview({
                         </td>
                       );
                     })}
-                    <td className="p-1 border-l border-slate-900/40 text-center w-20" style={{ width: "80px" }}>
+                    <td className="p-1 border-l border-slate-900/40 text-center w-20 print:hidden" style={{ width: "80px" }}>
                       {isModified && (
                         <button
                           onClick={() => handleUndoRow(rIdx)}
@@ -1990,7 +2076,7 @@ export default function GridPreview({
               {t.detailTitle.replace("{empId}", currentEmpId || (currentLanguage === "ko" ? "선택 없음" : "None"))}
             </h4>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 print:hidden">
             <button
               onClick={handleInsertDetailRow}
               disabled={!currentEmpId}
@@ -2108,7 +2194,7 @@ export default function GridPreview({
 
       {/* TRANSACTION DATA DUMP 로그 터미널 레이어 */}
       {dumpOutput && (
-        <div className={`mt-4 bg-black border rounded-xl p-4 font-mono text-xs flex flex-col gap-2 relative shadow-2xl transition-all ${
+        <div className={`mt-4 bg-black border rounded-xl p-4 font-mono text-xs flex flex-col gap-2 relative shadow-2xl transition-all print:hidden ${
           dumpOutput.includes("[VALIDATION ERROR]")
             ? "border-red-900/50 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.15)]"
             : "border-emerald-900/50 text-emerald-400"
