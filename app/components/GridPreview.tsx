@@ -111,6 +111,10 @@ const MOCK_DETAIL_DATA: { [empId: string]: DetailRow[] } = {
  *      * 에러 ➔ [ˈerər]
  *      * 프리뷰 ➔ [ˈpriːvjuː]
  *      * 업데이트 ➔ [ʌpˈdeɪt]
+ *      * 선택 ➔ [sɪˈlekʃn]
+ *      * 체크박스 ➔ [ˈtʃekbɒks]
+ *      * 다중 선택 ➔ [ˈmʌlti sɪˈlekʃn]
+ *      * 토글 ➔ [ˈtɑːɡl]
  */
 const LANG_DICT = {
   ko: {
@@ -146,6 +150,7 @@ const LANG_DICT = {
     colName: "이름",
     colDept: "부서",
     colControl: "제어",
+    colSelect: "선택",
     undo: "원복",
     detailTitle: "[상세 내역 (Detail View) - 사원번호: {empId}]",
     detailSelectRow: "마스터 그리드에서 직원을 선택해 주십시오.",
@@ -187,7 +192,8 @@ const LANG_DICT = {
     tooltipCopy: "추출된 JSON 문자열을 클립보드에 원클릭 복사합니다.",
     tooltipDownload: "추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다.",
     btnPrint: "보고서 인쇄 🖨️",
-    tooltipPrint: "현재 화면을 규격에 맞춰 인쇄합니다 (dw_1.Print)."
+    tooltipPrint: "현재 화면을 규격에 맞춰 인쇄합니다 (dw_1.Print).",
+    tooltipCheckbox: "행 다중 선택 [ˈmʌlti sɪˈlekʃn] 체크박스 [ˈtʃekbɒks]"
   },
   en: {
     title: "💻 Web-Converted [ɡrɪd] [ˈpriːvjuː]",
@@ -222,6 +228,7 @@ const LANG_DICT = {
     colName: "Name",
     colDept: "Dept",
     colControl: "Control",
+    colSelect: "Select",
     undo: "Undo",
     detailTitle: "[Detail View - Emp ID: {empId}]",
     detailSelectRow: "Please select an employee from the master [ɡrɪd].",
@@ -263,7 +270,8 @@ const LANG_DICT = {
     tooltipCopy: "Copy the extracted JSON string to the clipboard with one click.",
     tooltipDownload: "Download the extracted JSON file to the local disk immediately.",
     btnPrint: "Print Report [prɪnt] 🖨️",
-    tooltipPrint: "Print the report page using native [prɪnt] API."
+    tooltipPrint: "Print the report page using native [prɪnt] API.",
+    tooltipCheckbox: "Row [ˈmʌlti sɪˈlekʃn] [ˈtʃekbɒks]"
   }
 };
 
@@ -286,6 +294,9 @@ export default function GridPreview({
   selectedRowIndex,
   onSelectRow,
 }: GridPreviewProps) {
+  // [Day 44 작업] 다중 선택 체크박스 상태 모델 정의 (Set 구조로 인덱스 추적)
+  const [selectedRowIds, setSelectedRowIds] = React.useState<Set<string>>(new Set());
+
   // [Day 36 작업] 삭제된 레코드를 추적하기 위한 버퍼 상태 및 타입 정의
   interface DeletedRowInfo {
     row_no: number;
@@ -439,8 +450,9 @@ export default function GridPreview({
 
   // [Day 37 작업] 컬럼 너비들의 합산으로 테이블의 전체 고정 폭 계산
   // [Day 42 작업] visibleColumns에 기재된 활성화된 컬럼들만 합산하여 계산
+  // [Day 44 작업] 다중 선택 체크박스(48px)가 추가되면서 테이블 너비 합산 공식 업데이트
   const totalTableWidth = React.useMemo(() => {
-    let sum = 48 + 80;
+    let sum = 48 + 48 + 80; // 체크박스(48) + No.(48) + 제어(80)
     (parsedData.columns || []).forEach((c) => {
       if (visibleColumns[c.name] !== false) {
         sum += columnWidths[c.name] || 150;
@@ -479,9 +491,10 @@ export default function GridPreview({
    *      활성화된 컬럼들만 합산하여 유기적으로 반영되므로 틀고정 경계선이 한 픽셀의 오차도 없이 유연하게 달라붙게 됩니다.
    *    - 리렌더링(Rerendering [riːˈrendərɪŋ]) 과정에서 DOM을 직접 조작하지 않고 데이터 상태와 뷰의 바인딩을 일치시킴으로써 뛰어난 성능과 설계의 분리(SoC)를 만족합니다.
    */
+  // [Day 44 작업] 다중 선택 체크박스(48px) 도입으로 인한 Frozen Column left 오프셋 계산식 튜닝
   const getFrozenLeftOffset = React.useCallback((colIndex: number): number => {
-    if (colIndex === -1) return 0; // 'No.' 열은 가장 첫 부분에 고정
-    let offset = 48; // 'No.' 열의 고정 너비 (48px)
+    if (colIndex === -1) return 48; // 'No.' 열은 체크박스(48px) 바로 다음에 고정
+    let offset = 96; // 체크박스(48px) + 'No.'(48px) 의 고정 너비 합산 오프셋
     for (let i = 0; i < colIndex; i++) {
       const colName = parsedData.columns[i]?.name;
       if (colName) {
@@ -496,10 +509,11 @@ export default function GridPreview({
   }, [parsedData.columns, columnWidths, visibleColumns]);
 
   // [Day 42 작업] 활성화된 전체 컬럼 개수 계산 (No. 및 제어 컬럼 제외)
+  // [Day 44 작업] 다중 선택 체크박스 열이 추가되면서 기본 colSpan에 체크박스 포함하도록 보정 (+3)
   const totalVisibleColSpan = React.useMemo(() => {
     const visibleCols = (parsedData.columns || []).filter((c) => visibleColumns[c.name] !== false).length;
     const visibleComps = (parsedData.computedFields || []).filter((comp) => visibleColumns[comp.name] !== false).length;
-    return visibleCols + visibleComps + 2; // No. + 제어 포함
+    return visibleCols + visibleComps + 3; // 체크박스 + No. + 제어 포함
   }, [parsedData.columns, parsedData.computedFields, visibleColumns]);
 
   // [Day 35 작업] 실시간 유효성 검증(Validation) 및 레거시 ItemChanged / dw_1.Find() 대치 로직
@@ -630,6 +644,7 @@ export default function GridPreview({
       setSortConfig({ key: "", direction: "none" });
       setFilterKeyword("");
       setDeleteBuffer([]);
+      setSelectedRowIds(new Set());
 
       setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
       setDetailDeleteBuffer([]);
@@ -752,6 +767,7 @@ export default function GridPreview({
       setGridData(resetSnapshot);
       setFilterKeyword("");
       setDeleteBuffer([]);
+      setSelectedRowIds(new Set());
       initialGridDataRef.current = JSON.parse(JSON.stringify(snapshotRef.current));
 
       setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
@@ -811,27 +827,65 @@ export default function GridPreview({
   };
 
   const handleDeleteRow = () => {
-    if (selectedRowIndex < 0 || selectedRowIndex >= gridData.length) return;
-
-    const rowToDelete = gridData[selectedRowIndex];
-
-    if (rowToDelete.row_status !== "New" && rowToDelete.row_status !== "NewModified") {
-      const { __originalIndex, row_status, ...cleanRow } = rowToDelete;
-      
-      const deletedItem: DeletedRowInfo = {
-        row_no: selectedRowIndex + 1,
-        row_status: "Deleted",
-        data: cleanRow,
-      };
-      
-      setDeleteBuffer((prev) => [...prev, deletedItem]);
+    // [Day 44 작업] 일괄 행 삭제 연동 파이프라인
+    // 체크박스로 다중 선택된 행이 있다면 일괄 삭제를 진행하고, 없으면 기존처럼 포커스된 단일 행을 삭제합니다.
+    const hasMultiSelected = selectedRowIds.size > 0;
+    
+    let targetRowIndices: number[] = [];
+    if (hasMultiSelected) {
+      // 선택된 __originalIndex를 가진 행들의 현재 인덱스를 찾음
+      gridData.forEach((row, idx) => {
+        if (row.__originalIndex && selectedRowIds.has(row.__originalIndex)) {
+          targetRowIndices.push(idx);
+        }
+      });
+    } else {
+      if (selectedRowIndex >= 0 && selectedRowIndex < gridData.length) {
+        targetRowIndices.push(selectedRowIndex);
+      }
     }
 
+    if (targetRowIndices.length === 0) return;
+
+    // 1. deleteBuffer에 적재할 삭제 대상 가공 및 추가
+    const deletedItems: DeletedRowInfo[] = [];
+    targetRowIndices.forEach((idx) => {
+      const rowToDelete = gridData[idx];
+      if (rowToDelete && rowToDelete.row_status !== "New" && rowToDelete.row_status !== "NewModified") {
+        const { __originalIndex, row_status, ...cleanRow } = rowToDelete;
+        deletedItems.push({
+          row_no: idx + 1,
+          row_status: "Deleted",
+          data: cleanRow,
+        });
+      }
+    });
+
+    if (deletedItems.length > 0) {
+      setDeleteBuffer((prev) => [...prev, ...deletedItems]);
+    }
+
+    // 2. gridData에서 대상 행들 필터링하여 제외
+    const targetSet = new Set(targetRowIndices);
     setGridData((prev) => {
-      const next = prev.filter((_, idx) => idx !== selectedRowIndex);
+      const next = prev.filter((_, idx) => !targetSet.has(idx));
       
+      // 삭제 후 포커스 행 인덱스 보정
       if (next.length > 0) {
-        const nextSelectIdx = selectedRowIndex >= next.length ? next.length - 1 : selectedRowIndex;
+        let nextSelectIdx = selectedRowIndex;
+        // 만약 기존 포커스 행이 삭제되었다면 가장 가까운 행으로 이동
+        if (targetSet.has(selectedRowIndex)) {
+          const smallerIndices = targetRowIndices.filter(i => i < selectedRowIndex);
+          const deletedBeforeCount = smallerIndices.length;
+          nextSelectIdx = Math.max(0, selectedRowIndex - deletedBeforeCount);
+          if (nextSelectIdx >= next.length) {
+            nextSelectIdx = next.length - 1;
+          }
+        } else {
+          // 기존 포커스 행이 삭제되지 않았더라도, 그 앞에 몇 개가 삭제되었는지 세서 당겨줌
+          const deletedBeforeCount = targetRowIndices.filter(i => i < selectedRowIndex).length;
+          nextSelectIdx = Math.max(0, selectedRowIndex - deletedBeforeCount);
+        }
         setTimeout(() => {
           onSelectRow(nextSelectIdx);
         }, 0);
@@ -842,7 +896,71 @@ export default function GridPreview({
       }
       return next;
     });
+
+    // 3. 다중 선택 상태 클리어
+    setSelectedRowIds(new Set());
   };
+
+  // [Day 44 작업] 다중 행 선택(Multi-Selection [ˈmʌlti sɪˈlekʃn]) 토글 [ˈtɑːɡl] 및 아키텍처 비교 주석
+  /*
+   * [레거시 파워빌더 다중 선택 vs 현대 React 선언형 Set 모델 아키텍처 비교]
+   *
+   * 1. 레거시 파워빌더 (C/S 환경):
+   *    - 파워빌더에서는 그리드(DataWindow)에서 여러 행을 다중 선택하기 위해 `dw_1.SelectRow(i, true)` 또는 `dw_1.SelectRow(i, false)` 함수를 호출하여
+   *      데이터윈도우 내 각 로우의 그래픽 상태 레이어를 명령형(Imperative)으로 제어하고 물리적 선택 상태를 반전시켰습니다.
+   *    - 이후 선택된 다중 행들을 판별하거나 추출하려면, 개발자가 1부터 `dw_1.RowCount()`까지 루프를 돌리며 `dw_1.IsSelected(i)`를
+   *      일일이 호출해 스캔하는 절차적이고 비효율적인 방식이 수반되었습니다. 이는 데이터 버퍼 상태와 UI 렌더링 레이어가 파워빌더 엔진 내부에
+   *      완전 통합(Hard-coupled)되어 개발자가 로우 상태를 투명하게 추적하거나 외부 파이프라인으로 일괄 연동하기 매우 까다로웠습니다.
+   *
+   * 2. 현대 웹 표준 React 아키텍처 (선언형 Set 기반 상태 매핑 및 키보드 웹 접근성):
+   *    - React 환경에서는 UI가 로우 레벨 상태의 투사체에 불과하다는 선언형(Declarative) 렌더링 패러다임을 따릅니다.
+   *    - 다중 행 선택(Multi-Selection [ˈmʌlti sɪˈlekʃn]) 상태는 `selectedRowIds` 라는 고유의 Set 객체 상태(State)로 선언하여 격리 관리됩니다.
+   *    - 개별 행 체크박스 토글(Toggle [ˈtɑːɡl]) 시, 대상 행의 고유 불변 키(`__originalIndex`)를 Set에 삽입/삭제(Set.has ? delete : add)하는 상태 변경 함수가 실행되며,
+   *      React는 이 상태 변동을 감지하고 가상 돔(Virtual DOM) 리렌더링을 유발하여 체크박스의 체크 여부(`checked={selectedRowIds.has(row.__originalIndex)}`)를 즉시 자동 맵핑합니다.
+   *    - 복잡한 루프 스캔 없이 단순히 `selectedRowIds` 집합의 존재 여부를 통해 즉시 다중 행 선택 여부를 판별(O(1))할 수 있으며,
+   *      스페이스바(`Space`) 키 이벤트를 Listen하여 키보드 웹 접근성 규칙에 맞춰 현재 포커스 행(`selectedRowIndex`)의 체크 상태를 즉각 반전시킬 수 있어
+   *      C/S 수준의 풍부한 UX와 명확한 아키텍처적 SoC(관심사 분리)를 완벽히 달성합니다.
+   */
+  const handleToggleRow = React.useCallback((rowOriginalIndex: string) => {
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowOriginalIndex)) {
+        next.delete(rowOriginalIndex);
+      } else {
+        next.add(rowOriginalIndex);
+      }
+      return next;
+    });
+  }, []);
+
+  const isAllFilteredSelected = React.useMemo(() => {
+    if (filteredRows.length === 0) return false;
+    return filteredRows.every(({ row }) => selectedRowIds.has(row.__originalIndex || ""));
+  }, [filteredRows, selectedRowIds]);
+
+  const handleToggleAll = React.useCallback(() => {
+    if (isAllFilteredSelected) {
+      setSelectedRowIds((prev) => {
+        const next = new Set(prev);
+        filteredRows.forEach(({ row }) => {
+          if (row.__originalIndex) {
+            next.delete(row.__originalIndex);
+          }
+        });
+        return next;
+      });
+    } else {
+      setSelectedRowIds((prev) => {
+        const next = new Set(prev);
+        filteredRows.forEach(({ row }) => {
+          if (row.__originalIndex) {
+            next.add(row.__originalIndex);
+          }
+        });
+        return next;
+      });
+    }
+  }, [filteredRows, isAllFilteredSelected]);
 
   // [Day 39 작업] 파워빌더 RowFocusChanged / ShareData 대치 설명 및 연동 상태 제어
   // [Day 39 작업] 디테일 데이터 행 추가 (dw_detail.InsertRow)
@@ -1180,6 +1298,7 @@ export default function GridPreview({
 
         setDeleteBuffer([]);
         setDetailDeleteBuffer([]);
+        setSelectedRowIds(new Set());
 
         snapshotRef.current = JSON.parse(JSON.stringify(updatedGridData));
         initialGridDataRef.current = JSON.parse(JSON.stringify(updatedGridData));
@@ -1603,10 +1722,23 @@ export default function GridPreview({
                   : "44px",
               }}
             >
-              {/* [Day 38 작업] No. 열 sticky 고정 적용 */}
+              {/* [Day 44 작업] 체크박스 [ˈtʃekbɒks] 다중 선택 [ˈmʌlti sɪˈlekʃn] sticky 고정 적용 */}
               <th 
                 className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
                 style={{ width: "48px", left: 0 }}
+                title={t.tooltipCheckbox}
+              >
+                <input
+                  type="checkbox"
+                  checked={isAllFilteredSelected}
+                  onChange={handleToggleAll}
+                  className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                />
+              </th>
+              {/* [Day 38 작업] No. 열 sticky 고정 적용 */}
+              <th 
+                className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
+                style={{ width: "48px", left: 48 }}
               >
                 {t.colNo}
               </th>
@@ -1737,18 +1869,45 @@ export default function GridPreview({
                     onClick={() => onSelectRow(rIdx)}
                     className={`transition-all font-mono cursor-pointer group ${rowBgClass}`}
                   >
+                    {/* [Day 44 작업] 체크박스 [ˈtʃekbɒks] 다중 선택 [ˈmʌlti sɪˈlekʃn] 개별 선택 셀 sticky left: 0 */}
+                    <td
+                      className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${cellBgClass} ${
+                        hasError
+                          ? "border-l-4 border-l-red-500"
+                          : isModified
+                          ? "border-l-4 border-l-emerald-500"
+                          : ""
+                      }`}
+                      style={{
+                        width: "48px",
+                        left: 0,
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation(); // 행 선택 클릭 이벤트 전파 차단
+                        if (row.__originalIndex) {
+                          handleToggleRow(row.__originalIndex);
+                        }
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={row.__originalIndex ? selectedRowIds.has(row.__originalIndex) : false}
+                        onChange={() => {}} // onClick에서 처리하므로 빈 핸들러
+                        className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                      />
+                    </td>
                     {/* [Day 38 작업] No. 열 sticky 고정 적용 및 오프셋 스타일 바인딩 */}
                     <td 
                       className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${cellBgClass} ${
                         hasError
-                          ? "border-l-4 border-l-red-500 text-red-400 font-bold"
+                          ? "text-red-400 font-bold"
                           : isModified 
-                          ? "border-l-4 border-l-emerald-500 text-emerald-400 font-bold" 
+                          ? "text-emerald-400 font-bold" 
                           : "text-slate-600"
                       }`} 
                       style={{ 
                         width: "48px",
-                        left: 0,
+                        left: 48,
                       }}
                     >
                       {fIdx + 1}
@@ -1892,6 +2051,13 @@ export default function GridPreview({
                                 }
                                 if (targetFound) break;
                               }
+                            }
+                          } else if (e.key === " ") {
+                            // [Day 44 작업] Space 입력 감지 및 현재 포커스된 행의 체크박스 토글 [ˈtɑːɡl]
+                            e.preventDefault();
+                            const currentRowObj = gridData[rIdx];
+                            if (currentRowObj && currentRowObj.__originalIndex) {
+                              handleToggleRow(currentRowObj.__originalIndex);
                             }
                           }
                         };
