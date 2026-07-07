@@ -326,6 +326,17 @@ export default function GridPreview({
   const [detailDeleteBuffer, setDetailDeleteBuffer] = React.useState<DeletedDetailRowInfo[]>([]);
   const [selectedDetailRowIndex, setSelectedDetailRowIndex] = React.useState<number>(0);
 
+  // [Day 45 작업] 내부 액션 인터셉트 모달 상태 선언
+  const [interceptModal, setInterceptModal] = React.useState<{
+    isOpen: boolean;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    message: "",
+    onConfirm: () => {},
+  });
+
   // [Day 39 작업] 마스터의 고유 ID 식별자 추출
   const currentMasterRow = gridData[selectedRowIndex];
   const currentEmpId = currentMasterRow ? (currentMasterRow.emp_id || currentMasterRow.id || "") : "";
@@ -1400,6 +1411,76 @@ export default function GridPreview({
     return editCount + deleteBuffer.length + detailModCount + detailDeleteBuffer.length;
   }, [gridData, deleteBuffer, detailData, detailDeleteBuffer]);
 
+  // [Day 45 작업] 데이터 이탈 방지(Dirty Check [ˈdɜːrti tʃek]) 상시 연산 구조
+  const isDirty = modifiedRowsCount > 0;
+
+  // [Day 45 작업] 브라우저 이탈 방지 beforeunload 이벤트 바인딩 및 버튼 인터셉트 조건절 블록
+  /*
+   * [파워빌더 레거시 CloseQuery / ModifiedCount / DeletedCount vs 현대 리액트 선언형 Dirty Check 아키텍처 비교]
+   *
+   * 1. 레거시 파워빌더 (C/S 환경의 트랜잭션 방어):
+   *    - 파워빌더 개발자들은 윈도우가 닫힐 때(Close) 또는 사용자가 새로운 조회를 수행하여 기존 버퍼가 덮어씌워지기 전에,
+   *      데이터 유실을 막기 위해 윈도우의 `CloseQuery` 이벤트나 조회 전단계에서 직접 명령형 스크립트를 수행했습니다.
+   *    - 이 때 `dw_1.ModifiedCount()`와 `dw_1.DeletedCount()` 함수를 명시적으로 호출하여 리턴값이 0보다 큰지
+   *      조사(Dirty Check [ˈdɜːrti tʃek])하는 조건문을 작성했습니다.
+   *    - 변경 사항이 발견되면 `MessageBox`를 띄워 저장 여부를 묻고, 사용자의 응답에 따라 `Message.ReturnValue = 1`을 설정해
+   *      이벤트 체인을 강제로 중단(Cancel)시키는 물리적 제어 방식을 사용했습니다.
+   *    - 이 방식은 UI 컴포넌트의 상태값들을 개발자가 직접 명령어로 수동 조회하고 판단해야 하므로, 복잡한 다중 버퍼 구조에서 누락이 발생하기 쉽습니다.
+   *
+   * 2. 현대 React 아키텍처 (선언형 파생 상태와 브라우저 수명 주기 캡처):
+   *    - React 환경에서는 상태(State)가 단일 진실 공급원(Single Source of Truth)으로 관리되며, UI와 데이터의 무결성은
+   *      선언형 파생 상태(Derived State)를 통해 실시간으로 자동 연산됩니다.
+   *    - 본 시스템의 `isDirty` 변수는 마스터와 디테일 그리드의 추가, 수정, 삭제 상태 변경 건수의 합산인 `modifiedRowsCount`에 의존하여
+   *      어떠한 추가 명령형 호출 없이도 렌더링 파이프라인에서 상시 동적으로 평가됩니다.
+   *    - 브라우저 이탈(탭 닫기, 새로고침) 시에는 브라우저 세션 라이프사이클 캡처 기술인 `beforeunload` 이벤트 리스너를 `useEffect` 훅으로
+   *      정밀하게 바인딩하여 OS 및 브라우저 레벨에서 안전하게 이탈을 방어합니다.
+   *    - 애플리케이션 내부의 주요 변경 유발 액션(재조회 `triggerRetrieve`, 전체 초기화 `triggerResetAll`) 또한 `isDirty`를 기준으로
+   *      인터셉트(Intercept [ˌɪntərˈsept]) 장벽을 구성하여, 저장되지 않은 변경 사항의 소멸을 사전에 방지하는 커스텀 다이얼로그 모달로 분기 처리를 수행합니다.
+   *    - `[최종 DB 반영 🚀]` 커밋 성공 시에는 버퍼 상태가 리셋됨에 따라 `isDirty`가 즉각 `false`로 클리어되어 무결한 동기화 상태를 달성합니다.
+   */
+  React.useEffect(() => {
+    if (!isDirty) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+      return "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [isDirty]);
+
+  const triggerRetrieve = () => {
+    if (isDirty) {
+      setInterceptModal({
+        isOpen: true,
+        message: "저장되지 않은 변경 사항이 소멸됩니다. 계속하시겠습니까?",
+        onConfirm: () => {
+          handleRetrieve();
+        },
+      });
+    } else {
+      handleRetrieve();
+    }
+  };
+
+  const triggerResetAll = () => {
+    if (isDirty) {
+      setInterceptModal({
+        isOpen: true,
+        message: "저장되지 않은 변경 사항이 소멸됩니다. 계속하시겠습니까?",
+        onConfirm: () => {
+          handleResetAll();
+        },
+      });
+    } else {
+      handleResetAll();
+    }
+  };
+
   return (
     <section className="bg-slate-950/80 border border-slate-900 rounded-2xl overflow-hidden shadow-2xl p-5 flex flex-col gap-4 relative print:p-0 print:border-none print:shadow-none print:bg-white print:text-black">
       {/* [Day 43 작업] 인쇄 전용 전역 스타일 정의 */}
@@ -1499,7 +1580,7 @@ export default function GridPreview({
           </button>
           {/* 전체 수정 데이터 일괄 초기화 버튼 */}
           <button
-            onClick={handleResetAll}
+            onClick={triggerResetAll}
             disabled={modifiedRowsCount === 0}
             className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold border transition-all ${
               modifiedRowsCount > 0
@@ -1654,7 +1735,7 @@ export default function GridPreview({
               onChange={(e) => setSearchKeyword(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  handleRetrieve();
+                  triggerRetrieve();
                 }
               }}
               className="bg-slate-950 border border-slate-800 hover:border-indigo-500/50 focus:border-indigo-500 text-xs text-slate-300 placeholder-slate-600 rounded px-3 py-1.5 w-48 focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all"
@@ -1663,7 +1744,7 @@ export default function GridPreview({
         </div>
 
         <button
-          onClick={handleRetrieve}
+          onClick={triggerRetrieve}
           disabled={isLoading}
           className="inline-flex items-center gap-1.5 px-4.5 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 bg-[length:200%_auto] hover:bg-right hover:scale-[1.02] text-xs text-white font-extrabold rounded shadow-[0_0_12px_rgba(99,102,241,0.35)] hover:shadow-[0_0_20px_rgba(16,185,129,0.6)] border border-indigo-500/20 active:scale-95 transition-all duration-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed z-10"
         >
@@ -2420,6 +2501,41 @@ export default function GridPreview({
           <pre className="overflow-auto max-h-48 scrollbar-thin whitespace-pre-wrap select-all">
             {dumpOutput}
           </pre>
+        </div>
+      )}
+
+      {/* [Day 45 작업] 저장되지 않은 변경 사항 이탈 경고 커스텀 다이얼로그 모달 */}
+      {interceptModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50 animate-fade-in print:hidden">
+          <div className="bg-[#0b0f19] border border-pink-500/30 rounded-2xl p-6 max-w-sm w-full shadow-[0_0_30px_rgba(244,63,94,0.3)] flex flex-col gap-4 text-center relative overflow-hidden">
+            <div className="absolute -top-10 -left-10 w-20 h-20 bg-pink-500/5 rounded-full blur-2xl pointer-events-none"></div>
+            <div className="flex items-center justify-center text-pink-500 text-4xl animate-pulse">
+              ⚠️
+            </div>
+            <h4 className="text-white text-base font-extrabold tracking-tight">저장되지 않은 변경 사항</h4>
+            <p className="text-slate-300 text-xs leading-relaxed font-medium">
+              {interceptModal.message}
+            </p>
+            <div className="flex justify-center gap-3 mt-2">
+              <button
+                onClick={() => {
+                  setInterceptModal({ isOpen: false, onConfirm: () => {}, message: "" });
+                }}
+                className="px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white text-xs font-bold transition-all cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  interceptModal.onConfirm();
+                  setInterceptModal({ isOpen: false, onConfirm: () => {}, message: "" });
+                }}
+                className="px-4 py-2 rounded-lg bg-pink-950/80 hover:bg-pink-900 border border-pink-500/40 hover:border-pink-500 text-pink-400 hover:text-pink-300 text-xs font-bold transition-all shadow-[0_0_12px_rgba(244,63,94,0.3)] cursor-pointer"
+              >
+                계속
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </section>
