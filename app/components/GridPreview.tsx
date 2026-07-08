@@ -527,6 +527,126 @@ export default function GridPreview({
     return visibleCols + visibleComps + 3; // 체크박스 + No. + 제어 포함
   }, [parsedData.columns, parsedData.computedFields, visibleColumns]);
 
+  // [Day 46 작업] 다중 컬럼 헤더 그룹화([ˈkɑːləm ˈhedər ˈɡruːpɪŋ]) 및 colSpan 동적 연산, Sticky 틀고정 동기화 로직
+  //
+  // [레거시 파워빌더와 현대 웹 표준 React의 다중 컬럼 헤더 그룹화(Column Header Grouping [ˈkɑːləm ˈhedər ˈɡruːpɪŋ]) 아키텍처 비교]
+  //
+  // 1. 레거시 파워빌더 (C/S 환경의 정적 헤더 밴드 꼼수):
+  //    - 파워빌더 데이터윈도우의 Grid 및 Tabular 프리젠테이션 스타일은 기본적으로 HTML5의 colSpan과 같은 다차원 셀 병합 구조를 지원하지 않았습니다.
+  //    - 이로 인해 과거 C/S 환경에서는 헤더 밴드(Header Band) 내에 컬럼 헤더 라벨들을 나열한 뒤, 그 위에 수동으로 정적인 텍스트 오브젝트(라벨)를
+  //      겹쳐 배치(Overlap)하고 하단 경계선을 제거하여 마치 셀이 병합된 것처럼 눈속임하는 정적 방식을 설계 및 사용했습니다.
+  //    - 이 방식은 런타임에 사용자가 마우스 드래그로 컬럼 너비(Width)를 변경하거나, 특정 컬럼을 숨기거나(`Visible='0'`), 가로 스크롤 시
+  //      상위 텍스트 오브젝트의 X 좌표와 너비가 자동으로 동기화되지 않아 레이아웃이 찢어지고 붕괴되는 치명적인 아키텍처적 한계가 있었습니다.
+  //
+  // 2. 현대 웹 표준 React 아키텍처 (선언형 계층 구조 스키마 렌더링 및 런타임 DOM 동기화):
+  //    - React 환경에서는 UI 구조를 데이터 상태의 투사체로 다루므로, 구조적 HTML5 시맨틱 테이블 구조(`colspan`, `rowspan`, `thead`)를 선언적으로 생성합니다.
+  //    - 컬럼 그룹화([ˈɡruːpɪŋ]) 스키마를 상태 데이터에 기반하여 정의하고, `visibleColumns`의 가시성 상태 변화에 따라 상위 그룹 헤더의 `colSpan`을 런타임에 동적으로 재연산합니다.
+  //    - 특정 그룹 내 컬럼이 모두 숨겨지면, 해당 그룹 자체를 DOM 트리에서 완전히 조건부 제거하여 깔끔한 화면을 유지합니다.
+  //    - 상위 그룹 헤더가 가로 스크롤 시 하위 고정 컬럼들과 한 몸처럼 움직이도록, 그룹의 첫 번째 활성화된 컬럼의 `left` 오프셋과 `position: sticky` 스타일을 상위 그룹 헤더에
+  //      동적으로 바인딩(Offset Sync)합니다.
+  //    - 드래그 리사이징 시에도 경계선이 정확히 일치하도록, 소속된 가시 컬럼들의 실시간 너비의 합(`reduce`)을 상위 그룹의 `style.width`로 자동 연계하여 완벽한 동기화와 SOC를 구현합니다.
+  const getColumnGroup = React.useCallback((colName: string): "basic" | "dept" | "personnel" => {
+    const nameLower = colName.toLowerCase();
+    if (nameLower.includes("id") || nameLower.includes("emp") || nameLower.includes("name") || nameLower.includes("rep")) {
+      return "basic";
+    }
+    if (nameLower.includes("dept") || nameLower.includes("region") || nameLower.includes("department")) {
+      return "dept";
+    }
+    return "personnel";
+  }, []);
+
+  const groupLabels = React.useMemo(() => ({
+    basic: currentLanguage === "ko" ? "기본 정보" : "Basic Info",
+    dept: currentLanguage === "ko" ? "부서 정보" : "Dept Info",
+    personnel: currentLanguage === "ko" ? "인사 실적" : "Personnel Info",
+  }), [currentLanguage]);
+
+  const headerGroups = React.useMemo(() => {
+    // 1. 활성화된 컬럼 및 계산식 컬럼 목록 가공
+    const activeCols = (parsedData.columns || [])
+      .map((col, idx) => ({ ...col, originalIndex: idx, isComputed: false }))
+      .filter((c) => visibleColumns[c.name] !== false);
+
+    const activeComps = (parsedData.computedFields || [])
+      .map((comp, idx) => ({
+        name: comp.name,
+        label: comp.label || comp.name,
+        alignment: comp.alignment,
+        expression: comp.expression,
+        originalIndex: idx,
+        isComputed: true,
+      }))
+      .filter((c) => visibleColumns[c.name] !== false);
+
+    // 2. 각 그룹별 수집 매핑
+    const groupsMap: Record<"basic" | "dept" | "personnel", Array<any>> = {
+      basic: [],
+      dept: [],
+      personnel: [],
+    };
+
+    activeCols.forEach((col) => {
+      const g = getColumnGroup(col.name);
+      groupsMap[g].push(col);
+    });
+
+    activeComps.forEach((comp) => {
+      const g = getColumnGroup(comp.name);
+      groupsMap[g].push(comp);
+    });
+
+    // 3. 그룹별 메타데이터 구성
+    return (["basic", "dept", "personnel"] as const)
+      .map((gKey) => {
+        const cols = groupsMap[gKey];
+        if (cols.length === 0) return null;
+
+        // 그룹의 총 너비 (리사이징 동적 연동)
+        const width = cols.reduce((sum, c) => sum + (columnWidths[c.name] || 150), 0);
+
+        // 첫 번째 컬럼의 left offset 및 sticky 여부 확인
+        const hasFrozen = cols.some((c) => !c.isComputed && c.originalIndex < 2);
+        let leftOffset: number | undefined = undefined;
+
+        if (hasFrozen) {
+          // 가시 컬럼들 중 첫 번째 frozen 컬럼의 left offset 추출
+          const firstFrozen = cols.find((c) => !c.isComputed && c.originalIndex < 2);
+          if (firstFrozen) {
+            leftOffset = getFrozenLeftOffset(firstFrozen.originalIndex);
+          }
+        }
+
+        return {
+          key: gKey,
+          label: groupLabels[gKey],
+          colSpan: cols.length,
+          width,
+          isSticky: hasFrozen,
+          leftOffset,
+          columns: cols,
+        };
+      })
+      .filter(Boolean) as Array<{
+        key: "basic" | "dept" | "personnel";
+        label: string;
+        colSpan: number;
+        width: number;
+        isSticky: boolean;
+        leftOffset: number | undefined;
+        columns: Array<any>;
+      }>;
+  }, [parsedData, visibleColumns, columnWidths, getColumnGroup, groupLabels, getFrozenLeftOffset]);
+
+  // 평탄화된 가시 컬럼 순서 목록 (tbody의 td들과 순서 일치 동기화용)
+  const flattenedActiveColumns = React.useMemo(() => {
+    const list: Array<any> = [];
+    headerGroups.forEach((g) => {
+      list.push(...g.columns);
+    });
+    return list;
+  }, [headerGroups]);
+
   // [Day 35 작업] 실시간 유효성 검증(Validation) 및 레거시 ItemChanged / dw_1.Find() 대치 로직
   const [validationErrors, setValidationErrors] = React.useState<{ [rowIndex: number]: string }>({});
 
@@ -1796,15 +1916,17 @@ export default function GridPreview({
 
         <table className="text-left text-xs border-collapse table-fixed" style={{ width: `${totalTableWidth}px` }}>
           <thead className="bg-slate-900 text-slate-400 font-bold sticky top-0 border-b border-slate-900 z-10">
+            {/* 1단: 상위 그룹 헤더 행 */}
             <tr
               style={{
                 height: parsedData?.bands?.header
-                  ? `${parsedData.bands.header / 2}px`
-                  : "44px",
+                  ? `${parsedData.bands.header / 4}px`
+                  : "24px",
               }}
             >
-              {/* [Day 44 작업] 체크박스 [ˈtʃekbɒks] 다중 선택 [ˈmʌlti sɪˈlekʃn] sticky 고정 적용 */}
+              {/* 체크박스, No.는 2단 병합(rowSpan=2)하여 1단에 위치 */}
               <th 
+                rowSpan={2}
                 className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
                 style={{ width: "48px", left: 0 }}
                 title={t.tooltipCheckbox}
@@ -1816,27 +1938,96 @@ export default function GridPreview({
                   className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
                 />
               </th>
-              {/* [Day 38 작업] No. 열 sticky 고정 적용 */}
               <th 
+                rowSpan={2}
                 className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
                 style={{ width: "48px", left: 48 }}
               >
                 {t.colNo}
               </th>
-              {(parsedData.columns || []).map((c, i) => {
-                if (visibleColumns[c.name] === false) return null; // [Day 42 작업] 컬럼 숨김 적용
-                const isFrozen = i < 2; // 맨 앞 2개 핵심 컬럼 고정
-                const leftOffset = isFrozen ? getFrozenLeftOffset(i) : undefined;
-                // [Day 42 작업] 노출되어 있는 고정 열들 중에서 가장 우측에 위치한 고정 열 식별
+
+              {/* [Day 46 작업] 상위 그룹 헤더 렌더링 블록 */}
+              {headerGroups.map((group) => {
+                const isLastFrozen = group.isSticky && visibleFrozenColumns.length > 0;
+                return (
+                  <th
+                    key={group.key}
+                    colSpan={group.colSpan}
+                    className={`p-2 text-center text-[11px] uppercase tracking-wider font-extrabold border-r border-slate-900/40 transition-all select-none ${
+                      group.isSticky ? "sticky z-30 bg-[#0d162d]" : "bg-slate-900"
+                    } ${
+                      group.key === "basic"
+                        ? "text-cyan-400 border-b border-cyan-950/40 shadow-[inset_0_-1px_0_rgba(34,211,238,0.2)]"
+                        : group.key === "dept"
+                        ? "text-indigo-400 border-b border-indigo-950/40 shadow-[inset_0_-1px_0_rgba(99,102,241,0.2)]"
+                        : "text-purple-400 border-b border-purple-950/40 shadow-[inset_0_-1px_0_rgba(168,85,247,0.2)]"
+                    } ${
+                      isLastFrozen && group.key === "basic"
+                        ? "border-r-2 border-r-indigo-500/80 shadow-[2px_0_5px_rgba(99,102,241,0.3)]"
+                        : ""
+                    }`}
+                    style={{
+                      width: `${group.width}px`,
+                      left: group.leftOffset,
+                    }}
+                  >
+                    {group.label}
+                  </th>
+                );
+              })}
+
+              {/* 제어 컬럼도 2단 병합(rowSpan=2) */}
+              <th 
+                rowSpan={2}
+                className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900 print:hidden" 
+                style={{ width: "80px" }}
+              >
+                {t.colControl}
+              </th>
+            </tr>
+
+            {/* 2단: 하위 개별 컬럼 헤더 행 */}
+            <tr
+              style={{
+                height: parsedData?.bands?.header
+                  ? `${parsedData.bands.header / 4}px`
+                  : "24px",
+              }}
+            >
+              {/* 이미 rowSpan=2로 처리된 체크박스, No., 제어는 배제 */}
+              {flattenedActiveColumns.map((c, i) => {
+                if (c.isComputed) {
+                  // 계산식 컬럼
+                  return (
+                    <th
+                      key={`comp-${c.name}-${i}`}
+                      className="p-2 text-amber-400 bg-indigo-950/20 relative group select-none text-[10px] font-mono border-r border-slate-900/40"
+                      style={{ width: `${columnWidths[c.name] || 150}px` }}
+                    >
+                      <div className="flex items-center gap-1 mr-2 justify-center">
+                        <span>🧮 {c.label || c.name}</span>
+                      </div>
+                      <div
+                        onMouseDown={(e) => handleResizeStart(c.name, e)}
+                        className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                        title={t.tooltipResize}
+                      />
+                    </th>
+                  );
+                }
+
+                // 일반 컬럼
+                const isFrozen = c.originalIndex < 2;
+                const leftOffset = isFrozen ? getFrozenLeftOffset(c.originalIndex) : undefined;
                 const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === c.name;
 
                 return (
                   <th
-                    key={i}
+                    key={`col-${c.name}-${i}`}
                     onClick={() => handleSort(c.name)}
-                    className={`p-3 font-mono text-slate-300 bg-slate-900 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-all border-r border-slate-900/40 relative group ${getAlignClass(
+                    className={`p-2 font-mono text-[10px] text-slate-300 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-all border-r border-slate-900/40 relative group ${getAlignClass(
                       c.alignment
-                    )} ${isFrozen ? "sticky z-30" : ""} ${
+                    )} ${isFrozen ? "sticky z-30 bg-[#0d162d]" : "bg-slate-900"} ${
                       isLastFrozen ? "border-r-2 border-r-indigo-500/80 shadow-[2px_0_5px_rgba(99,102,241,0.3)]" : ""
                     }`}
                     style={{ 
@@ -1845,10 +2036,10 @@ export default function GridPreview({
                     }}
                     title={t.tooltipSort}
                   >
-                    <div className="flex items-center justify-between gap-2 mr-2">
+                    <div className="flex items-center justify-between gap-1 mr-2">
                       <span>{translateColLabel(c.name, c.label || "", currentLanguage)}</span>
                       <span
-                        className={`text-[9px] font-bold px-1 py-0.5 rounded transition-all duration-300 ${
+                        className={`text-[8px] font-bold px-0.5 py-0.2 rounded transition-all duration-300 ${
                           sortConfig.key === c.name && sortConfig.direction !== "none"
                             ? sortConfig.direction === "asc"
                               ? "text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
@@ -1865,7 +2056,6 @@ export default function GridPreview({
                           : "-"}
                       </span>
                     </div>
-                    {/* [Day 37 작업] 컬럼 Resizing을 위한 다크 네온 스타일의 리사이저 핸들 포인트 */}
                     <div
                       onMouseDown={(e) => handleResizeStart(c.name, e)}
                       className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
@@ -1874,29 +2064,6 @@ export default function GridPreview({
                   </th>
                 );
               })}
-              {(parsedData.computedFields || []).map((comp, i) => {
-                if (visibleColumns[comp.name] === false) return null; // [Day 42 작업] 계산식 컬럼 숨김 적용
-                return (
-                  <th
-                    key={i}
-                    className="p-3 text-amber-400 bg-indigo-950/20 relative group select-none"
-                    style={{ width: `${columnWidths[comp.name] || 150}px` }}
-                  >
-                    <div className="flex items-center gap-2 mr-2">
-                      <span>🧮 {comp.label || comp.name}</span>
-                    </div>
-                    {/* [Day 37 작업] 계산식 컬럼 Resizing을 위한 다크 네온 스타일의 리사이저 핸들 포인트 */}
-                    <div
-                      onMouseDown={(e) => handleResizeStart(comp.name, e)}
-                      className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
-                      title={t.tooltipResize}
-                    />
-                  </th>
-                );
-              })}
-              <th className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900 print:hidden" style={{ width: "80px" }}>
-                {t.colControl}
-              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-900 text-slate-300">
@@ -1993,8 +2160,37 @@ export default function GridPreview({
                     >
                       {fIdx + 1}
                     </td>
-                    {(parsedData.columns || []).map((col, cIdx) => {
-                      if (visibleColumns[col.name] === false) return null; // [Day 42 작업] 컬럼 숨김 적용
+                    {flattenedActiveColumns.map((col, cIdx) => {
+                      if (col.isComputed) {
+                        // 계산식 컬럼 렌더링
+                        const mergedColumns = [
+                          ...parsedData.columns,
+                          ...(parsedData.arguments || []).map((arg) => ({
+                            name: arg.name,
+                            type: arg.type,
+                            dbname: arg.name,
+                          })),
+                        ];
+                        const res = evaluateDWExpression(
+                          col.expression,
+                          { ...row, ...argValues },
+                          mergedColumns
+                        );
+                        return (
+                          <td
+                            key={`comp-cell-${col.name}-${cIdx}`}
+                            className={`p-3 text-amber-400 font-bold bg-[#0f192b] border-r border-slate-900/40 ${getAlignClass(
+                              col.alignment
+                            )}`}
+                            title={col.expression}
+                            style={{ width: `${columnWidths[col.name] || 150}px` }}
+                          >
+                            {typeof res === "number" ? res.toLocaleString() : res}
+                          </td>
+                        );
+                      }
+
+                      // 일반 컬럼 렌더링
                       let isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
                       
                       if (col.protect && col.protect.toLowerCase().includes("if")) {
@@ -2010,9 +2206,8 @@ export default function GridPreview({
                       const cellAlignClass = getAlignClass(col.alignment);
                       const colType = (col.type || "").toLowerCase();
 
-                      const isFrozen = cIdx < 2;
-                      const leftOffset = isFrozen ? getFrozenLeftOffset(cIdx) : undefined;
-                      // [Day 42 작업] 노출되어 있는 고정 열들 중에서 가장 우측에 위치한 고정 열 식별
+                      const isFrozen = col.originalIndex < 2;
+                      const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
                       const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
 
                       const renderGridCellInput = () => {
@@ -2029,7 +2224,7 @@ export default function GridPreview({
                         };
 
                         const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-                          const columnsCount = parsedData.columns ? parsedData.columns.length : 0;
+                          const columnsCount = flattenedActiveColumns.length;
                           const currentFilteredIdx = filteredRows.findIndex(item => item.index === rIdx);
 
                           if (e.key === "ArrowDown") {
@@ -2068,13 +2263,15 @@ export default function GridPreview({
                             e.preventDefault();
                             let nextColIdx = cIdx + 1;
                             while (nextColIdx < columnsCount) {
-                              const nextCol = parsedData.columns[nextColIdx];
-                              const target = document.querySelector(
-                                `input[data-row="${rIdx}"][data-col="${nextCol.name}"]`
-                              ) as HTMLInputElement | null;
-                              if (target && !target.readOnly && target.tabIndex !== -1) {
-                                target.focus();
-                                break;
+                              const nextCol = flattenedActiveColumns[nextColIdx];
+                              if (!nextCol.isComputed) {
+                                const target = document.querySelector(
+                                  `input[data-row="${rIdx}"][data-col="${nextCol.name}"]`
+                                ) as HTMLInputElement | null;
+                                if (target && !target.readOnly && target.tabIndex !== -1) {
+                                  target.focus();
+                                  break;
+                                }
                               }
                               nextColIdx++;
                             }
@@ -2082,13 +2279,15 @@ export default function GridPreview({
                             e.preventDefault();
                             let prevColIdx = cIdx - 1;
                             while (prevColIdx >= 0) {
-                              const prevCol = parsedData.columns[prevColIdx];
-                              const target = document.querySelector(
-                                `input[data-row="${rIdx}"][data-col="${prevCol.name}"]`
-                              ) as HTMLInputElement | null;
-                              if (target && !target.readOnly && target.tabIndex !== -1) {
-                                target.focus();
-                                break;
+                              const prevCol = flattenedActiveColumns[prevColIdx];
+                              if (!prevCol.isComputed) {
+                                const target = document.querySelector(
+                                  `input[data-row="${rIdx}"][data-col="${prevCol.name}"]`
+                                ) as HTMLInputElement | null;
+                                if (target && !target.readOnly && target.tabIndex !== -1) {
+                                  target.focus();
+                                  break;
+                                }
                               }
                               prevColIdx--;
                             }
@@ -2101,7 +2300,7 @@ export default function GridPreview({
                             while (nextFilteredIdx < filteredRows.length) {
                               const nextRow = filteredRows[nextFilteredIdx].index;
                               const target = document.querySelector(
-                                `input[data-row="${nextRow}"][data-col="${col.name}"]`
+                                  `input[data-row="${nextRow}"][data-col="${col.name}"]`
                               ) as HTMLInputElement | null;
                               if (target && !target.readOnly && target.tabIndex !== -1) {
                                 target.focus();
@@ -2119,22 +2318,23 @@ export default function GridPreview({
                                 const targetRow = filteredRows[f].index;
                                 const startC = (f === startFilteredIdx) ? startCol : 0;
                                 for (let c = startC; c < columnsCount; c++) {
-                                  const targetCol = parsedData.columns[c];
-                                  const target = document.querySelector(
-                                    `input[data-row="${targetRow}"][data-col="${targetCol.name}"]`
-                                  ) as HTMLInputElement | null;
-                                  if (target && !target.readOnly && target.tabIndex !== -1) {
-                                    target.focus();
-                                    onSelectRow(targetRow);
-                                    targetFound = true;
-                                    break;
+                                  const targetCol = flattenedActiveColumns[c];
+                                  if (!targetCol.isComputed) {
+                                    const target = document.querySelector(
+                                      `input[data-row="${targetRow}"][data-col="${targetCol.name}"]`
+                                    ) as HTMLInputElement | null;
+                                    if (target && !target.readOnly && target.tabIndex !== -1) {
+                                      target.focus();
+                                      onSelectRow(targetRow);
+                                      targetFound = true;
+                                      break;
+                                    }
                                   }
                                 }
                                 if (targetFound) break;
                               }
                             }
                           } else if (e.key === " ") {
-                            // [Day 44 작업] Space 입력 감지 및 현재 포커스된 행의 체크박스 토글 [ˈtɑːɡl]
                             e.preventDefault();
                             const currentRowObj = gridData[rIdx];
                             if (currentRowObj && currentRowObj.__originalIndex) {
@@ -2231,15 +2431,15 @@ export default function GridPreview({
                             onChange={(e) => {
                               if (isCellReadOnly) return;
                               setGridData((prev) => {
-                                const next = [...prev];
-                                if (next[rIdx]) {
+                                  const next = [...prev];
+                                  if (next[rIdx]) {
                                     next[rIdx][col.name] = e.target.value;
                                     if (next[rIdx].row_status === "New") {
                                       next[rIdx].row_status = "NewModified";
                                     }
-                                }
-                                return next;
-                              });
+                                  }
+                                  return next;
+                                });
                             }}
                             onFocus={handleFocus}
                             onKeyDown={handleKeyDown}
@@ -2250,7 +2450,7 @@ export default function GridPreview({
 
                       return (
                         <td 
-                          key={cIdx} 
+                          key={`cell-${col.name}-${cIdx}`} 
                           className={`p-1 border-r border-slate-900/40 ${
                             isFrozen ? `sticky z-10 ${cellBgClass}` : ""
                           } ${
@@ -2262,34 +2462,6 @@ export default function GridPreview({
                           }}
                         >
                           {renderGridCellInput()}
-                        </td>
-                      );
-                    })}
-                    {(parsedData.computedFields || []).map((comp, cpIdx) => {
-                      if (visibleColumns[comp.name] === false) return null; // [Day 42 작업] 계산식 컬럼 숨김 적용
-                      const mergedColumns = [
-                        ...parsedData.columns,
-                        ...(parsedData.arguments || []).map((arg) => ({
-                          name: arg.name,
-                          type: arg.type,
-                          dbname: arg.name,
-                        })),
-                      ];
-                      const res = evaluateDWExpression(
-                        comp.expression,
-                        { ...row, ...argValues },
-                        mergedColumns
-                      );
-                      return (
-                        <td
-                          key={cpIdx}
-                          className={`p-3 text-amber-400 font-bold bg-indigo-950/10 ${getAlignClass(
-                            comp.alignment
-                          )}`}
-                          title={comp.expression}
-                          style={{ width: `${columnWidths[comp.name] || 150}px` }}
-                        >
-                          {typeof res === "number" ? res.toLocaleString() : res}
                         </td>
                       );
                     })}
