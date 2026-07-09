@@ -1534,6 +1534,62 @@ export default function GridPreview({
   // [Day 45 작업] 데이터 이탈 방지(Dirty Check [ˈdɜːrti tʃek]) 상시 연산 구조
   const isDirty = modifiedRowsCount > 0;
 
+  // [Day 47 작업] Array.reduce [əˈreɪ rɪˈdjuːs] 기반 실시간 파생 집계 연산 로직
+  /*
+   * [레거시 파워빌더 Summary Band [bænd] & Compute Object [kəmˈpjuːt ˈɒbdʒekt] vs 현대 React Derived State [dɪˈraɪvd steɪt] & CSS Sticky [ˈstɪki] 아키텍처 비교]
+   *
+   * 1. 레거시 파워빌더 (C/S 환경):
+   *    - 파워빌더 데이터윈도우에서는 특정 영역인 Summary Band [bænd] 또는 Footer Band [bænd]에 
+   *      Compute Object [kəmˈpjuːt ˈɒbdʒekt]를 드래그 앤 드롭한 뒤, `Sum(salary for detail)` 등 
+   *      엔진 내부 고유 함수를 지정해 동기식으로 데이터윈도우 버퍼를 역추적하여 수치를 평가했습니다.
+   *    - 이는 데이터윈도우의 2-Pass 또는 런타임 평가 엔진이 버퍼의 로우가 추가, 삭제, 수정될 때마다 
+   *      내부적으로 해당 Compute Object의 값 영역을 다시 계산하는 방식이었습니다.
+   *    - 이 방식은 화면 디자인(Layout) 밴드 내에 수치가 강력하게 바인딩되어 있으며, 가로/세로 스크롤 시
+   *      화면 하단에 이 수치들을 고정하려면 Grid 스타일이 아닌 Freeform이나 별도 윈도우 조작 꼼수를 써야 하는 등
+   *      C/S 특유의 표현적 제약이 컸습니다.
+   *
+   * 2. 현대 React 아키텍처 (Derived State [dɪˈraɪvd steɪt], Array.reduce [əˈreɪ rɪˈdjuːs] 및 CSS Sticky [ˈstɪki]):
+   *    - React 환경에서는 데이터가 상태(State)로 선언되고, UI는 이 상태의 순수 함수로서 렌더링됩니다.
+   *    - 별도의 집계용 로컬 상태를 두어 수동 업데이트하는 것이 아니라, `gridData` 상태가 변경될 때마다 
+   *      런타임에 이를 스캔하여 새로운 값을 계산해 내는 파생 상태(Derived State [dɪˈraɪvd steɪt]) 패러다임을 사용합니다.
+   *    - 이 과정에서 함수형 프로그래밍의 핵심 도구인 `Array.reduce` [əˈreɪ rɪˈdjuːs] 메소드를 활용하여 
+   *      단 한 번의 선언적인 스캔으로 정확한 총합계(Total [ˈtəʊtl]) 및 평균(Average [ˈævərɪdʒ])을 딜레이 없이 도출합니다.
+   *    - 또한, 웹 표준 CSS의 `position: sticky; bottom: 0;` 속성을 활용하면, 복잡한 스크롤 좌표 연산 스크립트 없이도
+   *      브라우저 자체 하드웨어 가속(GPU) 기술을 타며 세로 스크롤 시 항상 뷰포트 최하단에 서머리(Summary [ˈsʌməri]) 행을
+   *      부드럽고 안정적으로 고정할 수 있습니다.
+   *    - 가로 스크롤 시에도 헤더 및 본문의 고정(Frozen) 오프셋 수식(`getFrozenLeftOffset`)을 푸터의 각 열에 
+   *      그대로 투사하여 틀고정 컬럼들과 한 픽셀의 오차도 없이 완벽히 정렬을 일치시킵니다.
+   */
+  const footerSummaries = React.useMemo(() => {
+    const sums: { [colName: string]: number } = {};
+    const avgs: { [colName: string]: number } = {};
+    const counts: { [colName: string]: number } = {};
+
+    const numericCols = (parsedData.columns || []).filter(c => isNumericColumn(c.type));
+    numericCols.forEach(c => {
+      sums[c.name] = 0;
+      counts[c.name] = 0;
+    });
+
+    gridData.forEach((row) => {
+      numericCols.forEach((col) => {
+        const rawValue = row[col.name] ?? "";
+        const cleanValue = rawValue.replace(/,/g, "").trim();
+        if (cleanValue && !isNaN(Number(cleanValue))) {
+          sums[col.name] += Number(cleanValue);
+          counts[col.name] += 1;
+        }
+      });
+    });
+
+    numericCols.forEach((col) => {
+      const count = counts[col.name];
+      avgs[col.name] = count > 0 ? sums[col.name] / count : 0;
+    });
+
+    return { sums, avgs };
+  }, [gridData, parsedData.columns]);
+
   // [Day 45 작업] 브라우저 이탈 방지 beforeunload 이벤트 바인딩 및 버튼 인터셉트 조건절 블록
   /*
    * [파워빌더 레거시 CloseQuery / ModifiedCount / DeletedCount vs 현대 리액트 선언형 Dirty Check 아키텍처 비교]
@@ -1646,6 +1702,10 @@ export default function GridPreview({
           /* Sticky 포지션 해제 */
           .sticky {
             position: static !important;
+          }
+          tfoot {
+            position: static !important;
+            display: table-row-group !important;
           }
           .border-r-2 {
             border-right-width: 1px !important;
@@ -2481,6 +2541,99 @@ export default function GridPreview({
               })
             )}
           </tbody>
+          {/* [Day 47 작업] 실시간 총합계 및 평균 서머리(Summary [ˈsʌməri]) 행 <tfoot> 렌더링 블록 */}
+          <tfoot className="sticky bottom-0 bg-slate-950 border-t-2 border-cyan-500/80 z-30 shadow-[0_-4px_15px_rgba(6,182,212,0.25)] print:static print:border-t print:shadow-none">
+            {/* 합계(Total [ˈtəʊtl]) 행 */}
+            <tr className="bg-slate-900/90 text-cyan-400 font-bold border-b border-slate-900/60 font-mono select-none">
+              <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40" style={{ width: "48px", left: 0 }}>
+              </td>
+              <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40 text-[10px] text-cyan-500" style={{ width: "48px", left: 48 }}>
+                ∑
+              </td>
+              {flattenedActiveColumns.map((col, cIdx) => {
+                if (col.isComputed) {
+                  return (
+                    <td key={`sum-comp-${col.name}-${cIdx}`} className="p-3 text-right bg-[#0f192b] border-r border-slate-900/40 text-slate-600 italic text-[10px]" style={{ width: `${columnWidths[col.name] || 150}px` }}>
+                      N/A
+                    </td>
+                  );
+                }
+
+                const isFrozen = col.originalIndex < 2;
+                const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
+                const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
+                const isNum = isNumericColumn(col.type);
+
+                let cellText = "";
+                if (col.originalIndex === 0) {
+                  cellText = currentLanguage === "ko" ? "합계" : "Sum";
+                } else if (isNum) {
+                  cellText = formatNumberWithCommas(String(footerSummaries.sums[col.name] ?? 0));
+                }
+
+                return (
+                  <td
+                    key={`sum-cell-${col.name}-${cIdx}`}
+                    className={`p-3 border-r border-slate-900/40 ${isFrozen ? "sticky z-10 bg-[#090e1c]" : ""} ${isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""} ${isNum ? "text-right" : "text-center text-slate-500"}`}
+                    style={{
+                      width: `${columnWidths[col.name] || 150}px`,
+                      left: leftOffset,
+                    }}
+                  >
+                    {cellText}
+                  </td>
+                );
+              })}
+              <td className="p-3 border-l border-slate-900/40 bg-slate-900 text-center w-20 print:hidden" style={{ width: "80px" }}>
+              </td>
+            </tr>
+
+            {/* 평균(Average [ˈævərɪdʒ]) 행 */}
+            <tr className="bg-slate-900/90 text-amber-400 font-bold font-mono select-none">
+              <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40" style={{ width: "48px", left: 0 }}>
+              </td>
+              <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40 text-[10px] text-amber-500" style={{ width: "48px", left: 48 }}>
+                μ
+              </td>
+              {flattenedActiveColumns.map((col, cIdx) => {
+                if (col.isComputed) {
+                  return (
+                    <td key={`avg-comp-${col.name}-${cIdx}`} className="p-3 text-right bg-[#0f192b] border-r border-slate-900/40 text-slate-600 italic text-[10px]" style={{ width: `${columnWidths[col.name] || 150}px` }}>
+                      N/A
+                    </td>
+                  );
+                }
+
+                const isFrozen = col.originalIndex < 2;
+                const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
+                const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
+                const isNum = isNumericColumn(col.type);
+
+                let cellText = "";
+                if (col.originalIndex === 0) {
+                  cellText = currentLanguage === "ko" ? "평균" : "Avg";
+                } else if (isNum) {
+                  const avgVal = footerSummaries.avgs[col.name] ?? 0;
+                  cellText = formatNumberWithCommas(String(Number(avgVal.toFixed(2))));
+                }
+
+                return (
+                  <td
+                    key={`avg-cell-${col.name}-${cIdx}`}
+                    className={`p-3 border-r border-slate-900/40 ${isFrozen ? "sticky z-10 bg-[#090e1c]" : ""} ${isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""} ${isNum ? "text-right" : "text-center text-slate-500"}`}
+                    style={{
+                      width: `${columnWidths[col.name] || 150}px`,
+                      left: leftOffset,
+                    }}
+                  >
+                    {cellText}
+                  </td>
+                );
+              })}
+              <td className="p-3 border-l border-slate-900/40 bg-slate-900 text-center w-20 print:hidden" style={{ width: "80px" }}>
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
