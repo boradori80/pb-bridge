@@ -341,6 +341,114 @@ export default function GridPreview({
   const currentMasterRow = gridData[selectedRowIndex];
   const currentEmpId = currentMasterRow ? (currentMasterRow.emp_id || currentMasterRow.id || "") : "";
 
+  // [Day 48 작업] 런타임 조건부 서식 지정(Conditional Formatting [kənˈdɪʃənl ˈfɔːrmætɪŋ]) 스타일 판별 헬퍼 함수
+  // 
+  // [파워빌더 데이터윈도우 Expressions vs 현대 React 상태 기반 선언형 스타일링 비교]
+  // 
+  // 1. 레거시 파워빌더 (Expressions Evaluator [ɪkˈspreʃnz ɪˌvæljuˈeɪʃn] 엔진 방식):
+  //    - 파워빌더에서는 특정 컬럼의 배경색(Background.Color)이나 텍스트 색상(Color) 속성창에 
+  //      `if(sales >= 250000, rgb(16,185,129), rgb(255,255,255))` 형태의 Expressions [ɪkˈspreʃnz] 수식을 입력해 두었습니다.
+  //    - 런타임[ˈrʌntaɪm]에 데이터윈도우 버퍼의 값(예: dw_1.SetItem으로 수정 등)이 변경되면, 엔진이 내부의 
+  //      동적 연산 평가 엔진(Expressions Evaluator)을 구동하여 해당 셀을 다시 그리고 화면을 갱신했습니다.
+  //    - 이 방식은 개발자가 데이터윈도우 오브젝트(.srd)의 속성창 탭에 숨겨진 연산식을 개별적으로 설정해야 해서
+  //      가독성이 떨어지고, 대규모 수식이 얽힐 경우 디버깅이 극도로 까다로웠습니다.
+  // 
+  // 2. 현대 웹 표준 React 아키텍처 (상태 기반 동적 인라인 스타일 팩 바인딩 방식):
+  //    - React 환경에서는 UI가 컴포넌트 스코프의 상태(State, 즉 `gridData`) 데이터에 기반하여 실시간 투사됩니다.
+  //    - 사용자가 인풋 필드를 통해 특정 셀의 값을 변경하면, React의 단방향 데이터 바인딩에 의해 `gridData` 상태가
+  //      불변 객체 단위로 업데이트되고, React 런타임[ˈrʌntaɪm]이 상태 변화를 감지하여 가상 돔(Virtual DOM)을 재렌더링합니다.
+  //    - 이 렌더링 과정에서 복잡한 수식 엔진이나 수동 화면 갱신 루프 없이, 컴포넌트 내부 함수가
+  //      실시간으로 변경된 상태 값을 참조하여 조건에 부합하는 CSS 스타일 또는 인라인 스타일 팩(Style Pack)을 선언적으로 즉각 반환합니다.
+  //    - 이를 통해 스타일 조건식과 UI 구조가 한눈에 파악되며, 컴포넌트 내에서 완벽하게 제어할 수 있어 유지보수 편의성이 극대화됩니다.
+  const getCellStyleAndClass = React.useCallback((
+    row: { [key: string]: string }, 
+    colName: string, 
+    isFrozen: boolean,
+    hasError: boolean,
+    isSelected: boolean,
+    isModified: boolean,
+    isCellReadOnly: boolean
+  ) => {
+    const colNameLower = colName.toLowerCase();
+    let condClass = "";
+    
+    // 조건부 서식 조건 평가 (sales 수치 조건 및 status 상태값 조건)
+    if (colNameLower === "sales" || colNameLower === "salary" || colNameLower === "amt" || colNameLower === "amount") {
+      const rawVal = row[colName] ?? "";
+      const cleanVal = rawVal.replace(/,/g, "").trim();
+      const numVal = Number(cleanVal);
+      
+      if (!isNaN(numVal) && cleanVal !== "") {
+        if (numVal >= 250000) {
+          condClass = "cell-cond-high-sales";
+        } else if (numVal < 100000) {
+          condClass = "cell-cond-low-sales";
+        }
+      }
+    } else if (colNameLower === "status") {
+      const statusVal = (row[colName] ?? "").trim();
+      if (statusVal === "Closed") {
+        condClass = "cell-cond-status-closed";
+      } else if (statusVal === "Open") {
+        condClass = "cell-cond-status-open";
+      }
+    }
+
+    // 렌더링 우선순위(Priority)에 따른 스타일 및 클래스 조립
+    // 1순위: validation 오류(hasError)
+    // 2순위: 수식 기반 Protect 행 잠금(isCellReadOnly)
+    // 3순위: 선택 행 하이라이트(isSelected)
+    // 4순위: 런타임 데이터 연동형 조건부 서식(condClass)
+    // 5순위: 롤백 변동 행(isModified)
+    
+    let tdClass = "";
+    let tdStyle: React.CSSProperties = {};
+    let inputStyle: React.CSSProperties = {};
+
+    // 2-1. td background 클래스/스타일 결정
+    if (hasError) {
+      tdClass = isFrozen ? "bg-[#251016]" : "bg-red-950/25";
+      tdStyle.borderColor = "rgba(239, 68, 68, 0.3)";
+    } else if (isCellReadOnly) {
+      if (condClass) {
+        tdClass = condClass;
+      } else {
+        tdClass = isFrozen ? "bg-[#131722]" : "bg-slate-950/60";
+      }
+    } else if (condClass) {
+      tdClass = condClass;
+    } else if (isSelected) {
+      tdClass = isFrozen ? "bg-[#141b38]" : "bg-indigo-600/10";
+    } else if (isModified) {
+      tdClass = isFrozen ? "bg-[#0c201d]" : "bg-emerald-950/10";
+    } else {
+      if (isFrozen) {
+        tdClass = "bg-[#090e1c] group-hover:bg-[#11192e]";
+      } else {
+        tdClass = "group-hover:bg-[#11192e]/40";
+      }
+    }
+
+    // 2-2. input text 컬러 및 폰트 스타일 결정
+    if (hasError) {
+      inputStyle.color = "#fecaca";
+      inputStyle.fontWeight = "bold";
+    } else if (isCellReadOnly) {
+      inputStyle.color = "#64748b";
+      inputStyle.fontStyle = "italic";
+    } else if (condClass) {
+      // 조건부 서식의 글자색과 폰트 스타일은 CSS 클래스에 위임합니다.
+    } else {
+      inputStyle.color = "#ffffff";
+    }
+
+    return {
+      tdClass,
+      tdStyle,
+      inputStyle
+    };
+  }, []);
+
   // [Day 39 작업] 마스터 선택 행 변경 시 디테일 뷰 연동을 위한 선택 초기화 훅
   React.useEffect(() => {
     setSelectedDetailRowIndex(0);
@@ -1610,7 +1718,7 @@ export default function GridPreview({
    *      어떠한 추가 명령형 호출 없이도 렌더링 파이프라인에서 상시 동적으로 평가됩니다.
    *    - 브라우저 이탈(탭 닫기, 새로고침) 시에는 브라우저 세션 라이프사이클 캡처 기술인 `beforeunload` 이벤트 리스너를 `useEffect` 훅으로
    *      정밀하게 바인딩하여 OS 및 브라우저 레벨에서 안전하게 이탈을 방어합니다.
-   *    - 애플리케이션 내부의 주요 변경 유발 액션(재조회 `triggerRetrieve`, 전체 초기화 `triggerResetAll`) 또한 `isDirty`를 기준으로
+   *    - 내부 액션(재조회 `triggerRetrieve`, 전체 초기화 `triggerResetAll`) 또한 `isDirty`를 기준으로
    *      인터셉트(Intercept [ˌɪntərˈsept]) 장벽을 구성하여, 저장되지 않은 변경 사항의 소멸을 사전에 방지하는 커스텀 다이얼로그 모달로 분기 처리를 수행합니다.
    *    - `[최종 DB 반영 🚀]` 커밋 성공 시에는 버퍼 상태가 리셋됨에 따라 `isDirty`가 즉각 `false`로 클리어되어 무결한 동기화 상태를 달성합니다.
    */
@@ -1712,6 +1820,37 @@ export default function GridPreview({
             border-color: #000000 !important;
           }
         }
+
+        /* [Day 48 작업] 다크 네온 ERP 테마 맞춤형 조건부 서식 전용 스타일 */
+        .cell-cond-high-sales {
+          background-color: rgba(16, 185, 129, 0.15) !important;
+        }
+        .cell-cond-high-sales input {
+          color: #10b981 !important;
+          font-weight: bold !important;
+        }
+        
+        .cell-cond-low-sales {
+          background-color: rgba(244, 63, 94, 0.12) !important;
+        }
+        .cell-cond-low-sales input {
+          color: #f43f5e !important;
+        }
+        
+        .cell-cond-status-closed {
+          background-color: rgba(148, 163, 184, 0.1) !important;
+        }
+        .cell-cond-status-closed input {
+          color: #94a3b8 !important;
+        }
+        
+        .cell-cond-status-open {
+          background-color: rgba(251, 191, 36, 0.12) !important;
+        }
+        .cell-cond-status-open input {
+          color: #fbbf24 !important;
+          font-weight: bold !important;
+        }
       `}} />
 
       {/* [Day 40 작업] DB 트랜잭션 커밋 완료 녹색 네온 토스트 알림 */}
@@ -1811,7 +1950,7 @@ export default function GridPreview({
           </button>
         </div>
 
-        {/* [Day 41 작업] 다크 네온 스타일 [🌐 언어 선택] 토글/드롭다운 및 [컬럼 설정 ⚙️] */}
+        {/* [Day 41 작업] 다국어 선택 및 [컬럼 설정 ⚙️] */}
         <div className="flex items-center gap-2 flex-wrap print:hidden">
           <div className="flex items-center gap-2">
             <span className="text-xs font-mono font-bold text-cyan-400 animate-pulse">🌐</span>
@@ -1886,7 +2025,7 @@ export default function GridPreview({
         </div>
       </div>
 
-      {/* [Day 32 작업] 파워빌더 Retrieval Argument 아규먼트 입력을 상징하는 다크 네온 스타일 조회 조건 바 */}
+      {/* [Day 32 작업] 파워빌더 Retrieval Argument 조회 조건 바 */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0d1527]/90 border border-indigo-950/60 rounded-xl shadow-lg relative overflow-hidden print:hidden">
         <div className="absolute -top-10 -left-10 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none"></div>
         <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl pointer-events-none"></div>
@@ -1933,7 +2072,7 @@ export default function GridPreview({
         </button>
       </div>
 
-      {/* [Day 34 작업] 결과 내 필터링 인풋 입력 UI 컴포넌트 추가 (다크 네온 디자인) */}
+      {/* [Day 34 작업] 결과 내 필터링 인풋 입력 UI */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0a0f1d]/90 border border-cyan-950/60 rounded-xl shadow-lg relative overflow-hidden print:hidden">
         <div className="absolute -top-10 -left-10 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none"></div>
         <div className="flex items-center gap-2 z-10">
@@ -2156,16 +2295,6 @@ export default function GridPreview({
                   rowBgClass = "hover:bg-slate-800/40";
                 }
 
-                // [Day 38 작업] 고정 셀들의 불투명 배경색 지정 및 호버 대응
-                let cellBgClass = "bg-[#090e1c] group-hover:bg-[#11192e]";
-                if (hasError) {
-                  cellBgClass = "bg-[#251016] group-hover:bg-[#341820]";
-                } else if (isSelected) {
-                  cellBgClass = "bg-[#141b38] group-hover:bg-[#1b2447]";
-                } else if (isModified) {
-                  cellBgClass = "bg-[#0c201d] group-hover:bg-[#122e2a]";
-                }
-
                 return (
                   <tr
                     key={rIdx}
@@ -2177,14 +2306,16 @@ export default function GridPreview({
                     onClick={() => onSelectRow(rIdx)}
                     className={`transition-all font-mono cursor-pointer group ${rowBgClass}`}
                   >
-                    {/* [Day 44 작업] 체크박스 [ˈtʃekbɒks] 다중 선택 [ˈmʌlti sɪˈlekʃn] 개별 선택 셀 sticky left: 0 */}
+                    {/* [Day 44 작업] 체크박스 다중 선택 개별 선택 셀 sticky left: 0 */}
                     <td
-                      className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${cellBgClass} ${
+                      className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${
                         hasError
-                          ? "border-l-4 border-l-red-500"
+                          ? "bg-[#251016] border-l-4 border-l-red-500"
+                          : isSelected
+                          ? "bg-[#141b38]"
                           : isModified
-                          ? "border-l-4 border-l-emerald-500"
-                          : ""
+                          ? "bg-[#0c201d] border-l-4 border-l-emerald-500"
+                          : "bg-[#090e1c] group-hover:bg-[#11192e]"
                       }`}
                       style={{
                         width: "48px",
@@ -2206,12 +2337,14 @@ export default function GridPreview({
                     </td>
                     {/* [Day 38 작업] No. 열 sticky 고정 적용 및 오프셋 스타일 바인딩 */}
                     <td 
-                      className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${cellBgClass} ${
+                      className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${
                         hasError
-                          ? "text-red-400 font-bold"
+                          ? "bg-[#251016] text-red-400 font-bold"
+                          : isSelected
+                          ? "bg-[#141b38] text-slate-300"
                           : isModified 
-                          ? "text-emerald-400 font-bold" 
-                          : "text-slate-600"
+                          ? "bg-[#0c201d] text-emerald-400 font-bold" 
+                          : "bg-[#090e1c] group-hover:bg-[#11192e] text-slate-600"
                       }`} 
                       style={{ 
                         width: "48px",
@@ -2269,6 +2402,24 @@ export default function GridPreview({
                       const isFrozen = col.originalIndex < 2;
                       const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
                       const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
+
+                      // [Day 48 작업] 셀 <td> 내부 스타일 바인딩 블록
+                      // 
+                      // [인클로저 스타일 평가 및 렌더링 우선순위 연산]
+                      // 1순위: validation 오류(hasError) -> 붉은빛 경고 스타일 바인딩
+                      // 2순위: 수식 기반 Protect 행 잠금(isCellReadOnly) -> 회색조 차단 폰트 및 이탤릭체 적용
+                      // 3순위: 선택 행 하이라이트(isSelected) -> 네온 인디고 테두리 및 흐린 글로우 적용
+                      // 4순위: 런타임 데이터 연동형 조건부 서식(condStyle) -> 실시간 수치/상태 연동 동적 스타일(에메랄드/로즈/앰버 네온) 바인딩
+                      // 5순위: 롤백 변동 행(isModified) -> 소프트 에메랄드 은은한 백그라운드
+                      const { tdClass, tdStyle, inputStyle } = getCellStyleAndClass(
+                        row,
+                        col.name,
+                        isFrozen,
+                        hasError,
+                        isSelected,
+                        isModified,
+                        isCellReadOnly
+                      );
 
                       const renderGridCellInput = () => {
                         const baseClass =
@@ -2365,7 +2516,7 @@ export default function GridPreview({
                               if (target && !target.readOnly && target.tabIndex !== -1) {
                                 target.focus();
                                 onSelectRow(nextRow);
-                                targetFound = true;
+                                  targetFound = true;
                                 break;
                               }
                               nextFilteredIdx++;
@@ -2445,6 +2596,7 @@ export default function GridPreview({
                                 }
                               }}
                               onKeyDown={handleKeyDown}
+                              style={inputStyle}
                               className={`${baseClass} ${cellAlignClass} ${stateClass}`}
                             />
                           );
@@ -2475,6 +2627,7 @@ export default function GridPreview({
                               }}
                               onFocus={handleFocus}
                               onKeyDown={handleKeyDown}
+                              style={inputStyle}
                               className={`${baseClass} text-right ${stateClass}`}
                             />
                           );
@@ -2503,6 +2656,7 @@ export default function GridPreview({
                             }}
                             onFocus={handleFocus}
                             onKeyDown={handleKeyDown}
+                            style={inputStyle}
                             className={`${baseClass} ${cellAlignClass} ${stateClass}`}
                           />
                         );
@@ -2512,13 +2666,14 @@ export default function GridPreview({
                         <td 
                           key={`cell-${col.name}-${cIdx}`} 
                           className={`p-1 border-r border-slate-900/40 ${
-                            isFrozen ? `sticky z-10 ${cellBgClass}` : ""
+                            isFrozen ? "sticky z-10" : ""
                           } ${
                             isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""
-                          }`} 
+                          } ${tdClass}`} 
                           style={{ 
                             width: `${columnWidths[col.name] || 150}px`,
                             left: leftOffset,
+                            ...tdStyle,
                           }}
                         >
                           {renderGridCellInput()}
