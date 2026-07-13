@@ -193,7 +193,10 @@ const LANG_DICT = {
     tooltipDownload: "추출된 JSON 파일을 로컬 디스크로 즉시 다운로드합니다.",
     btnPrint: "보고서 인쇄 🖨️",
     tooltipPrint: "현재 화면을 규격에 맞춰 인쇄합니다 (dw_1.Print).",
-    tooltipCheckbox: "행 다중 선택 [ˈmʌlti sɪˈlekʃn] 체크박스 [ˈtʃekbɒks]"
+    tooltipCheckbox: "행 다중 선택 [ˈmʌlti sɪˈlekʃn] 체크박스 [ˈtʃekbɒks]",
+    rowSearchPlaceholder: "행 검색어 입력 (dw_1.Find)...",
+    btnFindNext: "다음 찾기 ➔",
+    btnFindPrev: "이전 찾기 ⬅"
   },
   en: {
     title: "💻 Web-Converted [ɡrɪd] [ˈpriːvjuː]",
@@ -271,7 +274,10 @@ const LANG_DICT = {
     tooltipDownload: "Download the extracted JSON file to the local disk immediately.",
     btnPrint: "Print Report [prɪnt] 🖨️",
     tooltipPrint: "Print the report page using native [prɪnt] API.",
-    tooltipCheckbox: "Row [ˈmʌlti sɪˈlekʃn] [ˈtʃekbɒks]"
+    tooltipCheckbox: "Row [ˈmʌlti sɪˈlekʃn] [ˈtʃekbɒks]",
+    rowSearchPlaceholder: "Search row (dw_1.Find)...",
+    btnFindNext: "Find Next ➔",
+    btnFindPrev: "Find Prev ⬅"
   }
 };
 
@@ -296,6 +302,101 @@ export default function GridPreview({
 }: GridPreviewProps) {
   // [Day 44 작업] 다중 선택 체크박스 상태 모델 정의 (Set 구조로 인덱스 추적)
   const [selectedRowIds, setSelectedRowIds] = React.useState<Set<string>>(new Set());
+
+  // [Day 49 작업] 조건 만족 행 자동 포커싱(Row Search & Jump)을 위한 상태 변수 선언
+  const [rowSearchKeyword, setRowSearchKeyword] = React.useState<string>("");
+  const [matchedRowIndices, setMatchedRowIndices] = React.useState<number[]>([]);
+  const [currentMatchPointer, setCurrentMatchPointer] = React.useState<number>(-1);
+
+  // [Day 49 작업] 포커스 [ˈfoʊkəs] 행 변경 시 뷰포트 내의 위치로 스크롤 [skroʊl]바 자동 연동 훅
+  React.useEffect(() => {
+    if (selectedRowIndex >= 0 && selectedRowIndex < gridData.length) {
+      const targetRowElement = document.getElementById(`grid-row-${selectedRowIndex}`);
+      if (targetRowElement) {
+        targetRowElement.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }, [selectedRowIndex, gridData]);
+
+  // [Day 49 작업] dw_1.Find() 및 dw_1.ScrollToRow() 대치용 행 검색 및 자동 포커스 [ˈfoʊkəs] 제어 핸들러
+  /*
+   * [레거시 파워빌더 dw_1.Find() & dw_1.ScrollToRow() vs 현대 React 상태 추적 및 scrollIntoView() 아키텍처 비교]
+   *
+   * 1. 레거시 파워빌더 (C/S 환경의 동기적 화면 제어):
+   *    - 파워빌더에서는 특정 조건의 행을 찾고 포커스 [ˈfoʊkəs]를 주려면 `ll_row = dw_1.Find("rep = '김개발'", 1, dw_1.RowCount())`와 같이
+   *      버퍼 스캔 함수를 동기식(Synchronous)으로 호출하여 타겟 행의 1-기반 물리 인덱스를 받아냈습니다.
+   *      이후 `dw_1.ScrollToRow(ll_row)`를 호출하면, 파워빌더 엔진이 윈도우 스크롤 스풀러에 이벤트를 보내 스크롤 [skroʊl]바를 
+   *      물리적으로 드래그하는 연산을 동기식으로 유발하여 화면을 스위칭하고 포커스 [ˈfoʊkəs] 행을 동기화했습니다.
+   *    - 이 방식은 UI와 데이터 버퍼 제어가 강력하게 동기적으로 묶여 있어 화면 스풀 작업이 끝날 때까지 스레드가 차단되고,
+   *      데이터가 많을 경우 심각한 렌더링 랙이 발생했습니다.
+   *
+   * 2. 현대 웹 표준 React 아키텍처 (선언형 상태 변화와 브라우저 하드웨어 가속 뷰포트 스크롤 [skroʊl] 제어):
+   *    - React 환경에서는 데이터 스캔과 UI 갱신이 엄격하게 비동기식/선언적으로 분리됩니다.
+   *    - 사용자가 행 검색어 입력 시, `gridData` 전체 배열에서 조건에 매칭되는 행들의 인덱스 목록(`matchedRowIndices`)을 
+   *      선언적 배열 탐색 알고리즘(Array.prototype.map 및 filter)을 활용하여 즉각 메모리 상에서 판별합니다.
+   *    - 이전/다음 찾기 버튼 클릭 시, 매칭 인덱스 배열 내에서 포인터를 앞뒤로 순환 이동시키고, 포커스 [ˈfoʊkəs] 행을 뜻하는 
+   *      `selectedRowIndex` 상태(State) 값만 전이시킵니다.
+   *    - React 런타임이 상태 변화를 감지하고 가상 돔(Virtual DOM)을 재구성하여 화면 상의 선택 로우 CSS 스타일을 자동 업데이트하며, 
+   *      `useEffect` 훅에 바인딩된 DOM 관측기가 타겟 엘리먼트(`grid-row-${selectedRowIndex}`)를 캡처하여 브라우저 네이티브 
+   *      `scrollIntoView({ block: "nearest" })` API를 통해 스크롤 [skroʊl] 갱신을 하드웨어 가속으로 빠르고 비차단 방식으로 처리합니다.
+   *    - 만약 일치하는 행이 발견되지 않으면, 하단 터미널 JSON 덤프 영역에 `[FIND ERROR]` 문구를 노출하고 
+   *      개발자 도구 콘솔에 빨간 경고 스타일링(`console.log('%c...', 'color: red')`)으로 예외 상황을 투명하게 안내합니다.
+   */
+  const handleRowSearch = (direction: "next" | "prev", keyword: string) => {
+    const trimmed = keyword.trim().toLowerCase();
+    if (!trimmed) return;
+
+    // 1. 현재 데이터셋(gridData) 스캔하여 매칭되는 실제 행들의 인덱스 수집
+    const matches: number[] = [];
+    gridData.forEach((row, idx) => {
+      const match = (parsedData.columns || []).some((col) => {
+        const val = String(row[col.name] ?? "").toLowerCase();
+        return val.includes(trimmed);
+      });
+      if (match) {
+        matches.push(idx);
+      }
+    });
+
+    if (matches.length === 0) {
+      // 일치하는 결과가 없을 시 터미널 로그에 빨갛게 경고 노출
+      const errMsg = `[FIND ERROR] 조건에 부합하는 행이 존재하지 않습니다. (검색어: "${keyword}")`;
+      setDumpOutput(errMsg);
+      console.log(`%c${errMsg}`, "color: #ef4444; font-weight: bold; font-size: 12px;");
+      return;
+    }
+
+    // 2. 포인터 전이 및 selectedRowIndex 강제 전이
+    let nextPointer = 0;
+    if (direction === "next") {
+      // 현재 포커스된 selectedRowIndex 이후의 첫 번째 매칭 인덱스를 탐색
+      const nextMatch = matches.find((idx) => idx > selectedRowIndex);
+      if (nextMatch !== undefined) {
+        nextPointer = matches.indexOf(nextMatch);
+      } else {
+        // 더 이상 뒤에 매칭되는 행이 없으면 처음으로 순환
+        nextPointer = 0;
+      }
+    } else {
+      // 현재 포커스된 selectedRowIndex 이전의 마지막 매칭 인덱스를 탐색
+      const prevMatches = matches.filter((idx) => idx < selectedRowIndex);
+      if (prevMatches.length > 0) {
+        const prevMatch = prevMatches[prevMatches.length - 1];
+        nextPointer = matches.indexOf(prevMatch);
+      } else {
+        // 더 이상 앞에 매칭되는 행이 없으면 마지막으로 순환
+        nextPointer = matches.length - 1;
+      }
+    }
+
+    const targetRowIdx = matches[nextPointer];
+    setMatchedRowIndices(matches);
+    setCurrentMatchPointer(nextPointer);
+    onSelectRow(targetRowIdx);
+
+    // 검색 성공 시 에러 흔적이 있다면 지워줌
+    setDumpOutput((prev) => (prev && prev.includes("[FIND ERROR]") ? null : prev));
+  };
 
   // [Day 36 작업] 삭제된 레코드를 추적하기 위한 버퍼 상태 및 타입 정의
   interface DeletedRowInfo {
@@ -884,6 +985,9 @@ export default function GridPreview({
       setFilterKeyword("");
       setDeleteBuffer([]);
       setSelectedRowIds(new Set());
+      setRowSearchKeyword("");
+      setMatchedRowIndices([]);
+      setCurrentMatchPointer(-1);
 
       setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
       setDetailDeleteBuffer([]);
@@ -1007,6 +1111,9 @@ export default function GridPreview({
       setFilterKeyword("");
       setDeleteBuffer([]);
       setSelectedRowIds(new Set());
+      setRowSearchKeyword("");
+      setMatchedRowIndices([]);
+      setCurrentMatchPointer(-1);
       initialGridDataRef.current = JSON.parse(JSON.stringify(snapshotRef.current));
 
       setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
@@ -2100,6 +2207,78 @@ export default function GridPreview({
         </div>
       </div>
 
+      {/* [Day 49 작업] 행 검색어 입력 및 양방향 찾기 조작 UI */}
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#090e1c]/90 border border-indigo-950/60 rounded-xl shadow-lg relative overflow-hidden print:hidden">
+        <div className="absolute -top-10 -left-10 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none"></div>
+        <div className="flex items-center gap-2 z-10">
+          <span className="text-[10px] font-mono text-indigo-400 font-bold uppercase tracking-wider">dw_1.Find()</span>
+          <span className="text-xs text-slate-300 font-bold">그리드 특정 조건 만족 행 일괄 자동 포커싱 [ˈfoʊkəs] 및 스크롤 [skroʊl] 연동</span>
+          {matchedRowIndices.length > 0 && (
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950/80 text-indigo-400 border border-indigo-500/20 font-bold shadow-[0_0_8px_rgba(99,102,241,0.3)]">
+              {currentMatchPointer + 1} / {matchedRowIndices.length} 건 일치
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 z-10 w-full sm:w-auto flex-wrap sm:flex-nowrap">
+          <div className="relative flex items-center w-full sm:w-64">
+            <input
+              type="text"
+              placeholder={t.rowSearchPlaceholder}
+              value={rowSearchKeyword}
+              onChange={(e) => {
+                setRowSearchKeyword(e.target.value);
+                setMatchedRowIndices([]);
+                setCurrentMatchPointer(-1);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleRowSearch("next", rowSearchKeyword);
+                }
+              }}
+              className="bg-slate-950 border border-slate-800 hover:border-indigo-500/50 focus:border-indigo-500 text-xs text-slate-300 placeholder-slate-600 rounded px-3 py-1.5 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all pl-8 shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)]"
+            />
+            <span className="absolute left-2.5 text-xs text-indigo-500 pointer-events-none">🔍</span>
+            {rowSearchKeyword && (
+              <button
+                onClick={() => {
+                  setRowSearchKeyword("");
+                  setMatchedRowIndices([]);
+                  setCurrentMatchPointer(-1);
+                }}
+                className="absolute right-2 text-xs text-slate-500 hover:text-slate-300 focus:outline-none cursor-pointer"
+                title={currentLanguage === "ko" ? "검색어 초기화" : "Clear Search"}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <div className="flex gap-1 w-full sm:w-auto">
+            <button
+              onClick={() => handleRowSearch("prev", rowSearchKeyword)}
+              disabled={!rowSearchKeyword.trim()}
+              className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded text-xs font-bold border transition-all ${
+                rowSearchKeyword.trim()
+                  ? "border-indigo-500/30 bg-slate-950 text-indigo-400 hover:bg-indigo-900/40 hover:text-indigo-300 hover:shadow-[0_0_8px_rgba(99,102,241,0.3)] cursor-pointer"
+                  : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
+              }`}
+            >
+              {t.btnFindPrev}
+            </button>
+            <button
+              onClick={() => handleRowSearch("next", rowSearchKeyword)}
+              disabled={!rowSearchKeyword.trim()}
+              className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded text-xs font-bold border transition-all ${
+                rowSearchKeyword.trim()
+                  ? "border-indigo-500/30 bg-slate-950 text-indigo-400 hover:bg-indigo-900/40 hover:text-indigo-300 hover:shadow-[0_0_8px_rgba(99,102,241,0.3)] cursor-pointer"
+                  : "border-slate-900 bg-slate-950 text-slate-700 cursor-not-allowed"
+              }`}
+            >
+              {t.btnFindNext}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* 고속 입력용 가변 뷰포트 및 스크롤 최적화 구역 */}
       <div className="relative overflow-x-auto overflow-y-auto border border-slate-900 rounded-xl min-h-[260px] max-h-[400px] scrollbar-thin">
         {/* [Day 32 작업] 데이터 조회 중 로딩 레이어 오버레이 */}
@@ -2298,6 +2477,7 @@ export default function GridPreview({
                 return (
                   <tr
                     key={rIdx}
+                    id={`grid-row-${rIdx}`}
                     style={{
                       height: parsedData?.bands?.detail
                         ? `${parsedData.bands.detail / 2}px`
