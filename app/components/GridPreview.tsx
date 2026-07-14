@@ -292,6 +292,897 @@ const translateColLabel = (colName: string, label: string, lang: "ko" | "en") =>
   return label || colName;
 };
 
+// [Day 50 작업]
+// [레거시 파워빌더 SystemError / DBError 이벤트 vs 현대 React 선언형 Error Boundary / State Reset 아키텍처 비교]
+//
+// 1. 레거시 파워빌더 글로벌 예외 처리 (C/S 아키텍처):
+//    - SystemError 이벤트: Application 오브젝트 레벨에서 발생하는 모든 처리되지 않은 런타임 [ˈrʌntaɪm] 예외를 캡처하는 글로벌 이벤트 핸들러입니다.
+//      만약 이 이벤트 스크립트를 조립하지 않으면, 애플리케이션 내의 널 포인터 참조, 배열 인덱스 초과 등 오류 발생 시 프로그램이 윈도우 OS 상에서
+//      어떠한 경고도 없이 강제 종료(Abend, Abnormal End)되는 비극을 맞이하게 됩니다. 개발자들은 여기서 에러 객체(Error 구조체) 정보를 파일에
+//      덤프하거나 복구 작업을 시도한 뒤 HALT CLOSE 명령어로 정상적인 종료를 유도하여 시스템 붕괴를 막았습니다.
+//    - DBError 이벤트: DataWindow 레벨에서 SQL 실행 중 DB 오류(네트워크 단선, 제약조건 위반, 세션 끊김 등) 발생 시 구동되는 이벤트입니다.
+//      이 이벤트 내에서 Return 1 코드를 제어하여 파워빌더가 기본적으로 출력하는 파괴적인 시스템 경고 창을 억제(Suppress)하고,
+//      세션 롤백(ROLLBACK USING SQLCA;)을 실행하여 세션을 정상으로 복구하고 프로그램을 강제 종료로부터 방어했습니다.
+//
+// 2. 현대 웹 표준 React 아키텍처 (선언형 에러 캡처 및 가상 상태 복원):
+//    - Error Boundary ([ˈerər] [ˈbaʊndri]): React 컴포넌트 트리 하위에서 발생한 렌더링 [ˈrendərɪŋ] 오류를 선언적으로 캡처(Catch)하여
+//      전체 애플리케이션이 하얗게 굳어버리는 화이트스크린(White Screen) 현상을 방지하는 안전 격리 레이어입니다.
+//      클래스 컴포넌트의 componentDidCatch 및 getDerivedStateFromError 생명주기 메소드를 활용하여 오류 상태를 감지하고,
+//      그리드 격자판 영역에만 국한하여 다크 네온 레드 스타일의 복구 화면(Fallback UI)을 렌더링함으로써 오류를 격리합니다.
+//    - 가상 상태 리셋 복구 (State Reset [steɪt] [riːˈset]): 에러 발생 시 노출되는 [세션 재조회 및 리셋 ↺] 버튼 클릭 시,
+//      부모가 전달한 setGridData를 통해 오염된 데이터 버퍼를 초기 깨끗한 스냅샷(snapshotRef.current 또는 기본 Mock)으로 리셋하고,
+//      동시에 handleRetrieve() 함수를 트리거하여 상단 조회 바의 조건에 따라 DB 재조회를 비차단(Non-blocking) 방식으로 즉각 가동합니다.
+//      동시에 에러 바운더리의 내부 hasError 상태를 초기화하여 정상적인 그리드로 즉각 회복시키는 정밀 상태 복구 회로를 완성합니다.
+
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+  onReset: () => void;
+  fallback: (error: Error | null, reset: () => void) => React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class GridErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("GridErrorBoundary [ˈerər] [ˈbaʊndri] 포착:", error, errorInfo);
+  }
+
+  handleReset = () => {
+    this.props.onReset();
+    this.setState({ hasError: false, error: null });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback(this.state.error, this.handleReset);
+    }
+    return this.props.children;
+  }
+}
+
+interface GridTableInnerProps {
+  isLoading: boolean;
+  totalTableWidth: number;
+  parsedData: ParsedPB;
+  visibleColumns: Record<string, boolean>;
+  columnWidths: { [key: string]: number };
+  flattenedActiveColumns: Array<any>;
+  gridData: Array<{ [key: string]: string }>;
+  filteredRows: Array<{ row: { [key: string]: string }; index: number }>;
+  validationErrors: { [rowIndex: number]: string };
+  selectedRowIndex: number;
+  selectedRowIds: Set<string>;
+  argValues: { [key: string]: string };
+  currentLanguage: "ko" | "en";
+  footerSummaries: { sums: { [colName: string]: number }; avgs: { [colName: string]: number } };
+  visibleFrozenColumns: any[];
+  isAllFilteredSelected: boolean;
+  handleToggleAll: () => void;
+  handleToggleRow: (rowOriginalIndex: string) => void;
+  onSelectRow: (rIdx: number) => void;
+  handleSort: (colName: string) => void;
+  handleResizeStart: (colKey: string, e: React.MouseEvent) => void;
+  handleUndoRow: (rIdx: number) => void;
+  getFrozenLeftOffset: (colIndex: number) => number;
+  getAlignClass: (alignCode: string | undefined) => string;
+  translateColLabel: (colName: string, label: string, lang: "ko" | "en") => string;
+  getCellStyleAndClass: (
+    row: { [key: string]: string }, 
+    colName: string, 
+    isFrozen: boolean,
+    hasError: boolean,
+    isSelected: boolean,
+    isModified: boolean,
+    isCellReadOnly: boolean
+  ) => { tdClass: string; tdStyle: React.CSSProperties; inputStyle: React.CSSProperties };
+  setGridData: React.Dispatch<React.SetStateAction<Array<{ [key: string]: string }>>>;
+  sortConfig: { key: string; direction: "asc" | "desc" | "none" };
+  filterKeyword: string;
+  initialGridDataRef: React.MutableRefObject<Array<{ [key: string]: string }>>;
+  t: any;
+  totalVisibleColSpan: number;
+}
+
+const GridTableInner = ({
+  isLoading,
+  totalTableWidth,
+  parsedData,
+  visibleColumns,
+  columnWidths,
+  flattenedActiveColumns,
+  gridData,
+  filteredRows,
+  validationErrors,
+  selectedRowIndex,
+  selectedRowIds,
+  argValues,
+  currentLanguage,
+  footerSummaries,
+  visibleFrozenColumns,
+  isAllFilteredSelected,
+  handleToggleAll,
+  handleToggleRow,
+  onSelectRow,
+  handleSort,
+  handleResizeStart,
+  handleUndoRow,
+  getFrozenLeftOffset,
+  getAlignClass,
+  translateColLabel,
+  getCellStyleAndClass,
+  setGridData,
+  sortConfig,
+  filterKeyword,
+  initialGridDataRef,
+  t,
+  totalVisibleColSpan,
+}: GridTableInnerProps) => {
+  // 의도적인 런타임 렌더링 에러 테스트 기믹
+  gridData.forEach((row) => {
+    const repName = row.rep ?? row.name ?? "";
+    if (repName.includes("TRIGGER_CRASH")) {
+      throw new Error("의도적으로 유발된 런타임 [ˈrʌntaɪm] 렌더링 [ˈrendərɪŋ] 오류 [ˈerər] : 사원명에 TRIGGER_CRASH가 감지되었습니다.");
+    }
+  });
+
+  return (
+    <>
+      {isLoading && (
+        <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex flex-col items-center justify-center gap-3 z-30 transition-all">
+          <div className="w-9 h-9 rounded-full border-[3px] border-indigo-500/10 border-t-indigo-500 animate-spin shadow-[0_0_15px_rgba(99,102,241,0.4)]"></div>
+          <div className="flex flex-col items-center gap-0.5">
+            <span className="text-xs font-bold text-indigo-400 tracking-wide animate-pulse">{t.loading}</span>
+            <span className="text-[9px] font-mono text-slate-500">{t.loadingSub}</span>
+          </div>
+        </div>
+      )}
+
+      <table className="text-left text-xs border-collapse table-fixed" style={{ width: `${totalTableWidth}px` }}>
+        <thead className="bg-slate-900 text-slate-400 font-bold sticky top-0 border-b border-slate-900 z-10">
+          <tr
+            style={{
+              height: parsedData?.bands?.header
+                ? `${parsedData.bands.header / 4}px`
+                : "24px",
+            }}
+          >
+            <th 
+              rowSpan={2}
+              className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
+              style={{ width: "48px", left: 0 }}
+              title={t.tooltipCheckbox}
+            >
+              <input
+                type="checkbox"
+                checked={isAllFilteredSelected}
+                onChange={handleToggleAll}
+                className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+              />
+            </th>
+            <th 
+              rowSpan={2}
+              className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
+              style={{ width: "48px", left: 48 }}
+            >
+              {t.colNo}
+            </th>
+
+            {(() => {
+              const activeCols = (parsedData.columns || [])
+                .map((col, idx) => ({ ...col, originalIndex: idx, isComputed: false }))
+                .filter((c) => visibleColumns[c.name] !== false);
+
+              const activeComps = (parsedData.computedFields || [])
+                .map((comp, idx) => ({
+                  name: comp.name,
+                  label: comp.label || comp.name,
+                  alignment: comp.alignment,
+                  expression: comp.expression,
+                  originalIndex: idx,
+                  isComputed: true,
+                }))
+                .filter((c) => visibleColumns[c.name] !== false);
+
+              const groupsMap: Record<"basic" | "dept" | "personnel", Array<any>> = {
+                basic: [],
+                dept: [],
+                personnel: [],
+              };
+
+              const getColumnGroup = (colName: string): "basic" | "dept" | "personnel" => {
+                const nameLower = colName.toLowerCase();
+                if (nameLower.includes("id") || nameLower.includes("emp") || nameLower.includes("name") || nameLower.includes("rep")) {
+                  return "basic";
+                }
+                if (nameLower.includes("dept") || nameLower.includes("region") || nameLower.includes("department")) {
+                  return "dept";
+                }
+                return "personnel";
+              };
+
+              activeCols.forEach((col) => {
+                const g = getColumnGroup(col.name);
+                groupsMap[g].push(col);
+              });
+
+              activeComps.forEach((comp) => {
+                const g = getColumnGroup(comp.name);
+                groupsMap[g].push(comp);
+              });
+
+              const groupLabels = {
+                basic: currentLanguage === "ko" ? "기본 정보" : "Basic Info",
+                dept: currentLanguage === "ko" ? "부서 정보" : "Dept Info",
+                personnel: currentLanguage === "ko" ? "인사 실적" : "Personnel Info",
+              };
+
+              return (["basic", "dept", "personnel"] as const)
+                .map((gKey) => {
+                  const cols = groupsMap[gKey];
+                  if (cols.length === 0) return null;
+
+                  const width = cols.reduce((sum, c) => sum + (columnWidths[c.name] || 150), 0);
+                  const hasFrozen = cols.some((c) => !c.isComputed && c.originalIndex < 2);
+                  let leftOffset: number | undefined = undefined;
+
+                  if (hasFrozen) {
+                    const firstFrozen = cols.find((c) => !c.isComputed && c.originalIndex < 2);
+                    if (firstFrozen) {
+                      leftOffset = getFrozenLeftOffset(firstFrozen.originalIndex);
+                    }
+                  }
+
+                  const isLastFrozen = hasFrozen && visibleFrozenColumns.length > 0;
+
+                  return (
+                    <th
+                      key={gKey}
+                      colSpan={cols.length}
+                      className={`p-2 text-center text-[11px] uppercase tracking-wider font-extrabold border-r border-slate-900/40 transition-all select-none ${
+                        hasFrozen ? "sticky z-30 bg-[#0d162d]" : "bg-slate-900"
+                      } ${
+                        gKey === "basic"
+                          ? "text-cyan-400 border-b border-cyan-950/40 shadow-[inset_0_-1px_0_rgba(34,211,238,0.2)]"
+                          : gKey === "dept"
+                          ? "text-indigo-400 border-b border-indigo-950/40 shadow-[inset_0_-1px_0_rgba(99,102,241,0.2)]"
+                          : "text-purple-400 border-b border-purple-950/40 shadow-[inset_0_-1px_0_rgba(168,85,247,0.2)]"
+                      } ${
+                        isLastFrozen && gKey === "basic"
+                          ? "border-r-2 border-r-indigo-500/80 shadow-[2px_0_5px_rgba(99,102,241,0.3)]"
+                          : ""
+                      }`}
+                      style={{
+                        width: `${width}px`,
+                        left: leftOffset,
+                      }}
+                    >
+                      {groupLabels[gKey]}
+                    </th>
+                  );
+                })
+                .filter(Boolean);
+            })()}
+
+            <th 
+              rowSpan={2}
+              className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900 print:hidden" 
+              style={{ width: "80px" }}
+            >
+              {t.colControl}
+            </th>
+          </tr>
+
+          <tr
+            style={{
+              height: parsedData?.bands?.header
+                ? `${parsedData.bands.header / 4}px`
+                : "24px",
+            }}
+          >
+            {flattenedActiveColumns.map((c, i) => {
+              if (c.isComputed) {
+                return (
+                  <th
+                    key={`comp-${c.name}-${i}`}
+                    className="p-2 text-amber-400 bg-indigo-950/20 relative group select-none text-[10px] font-mono border-r border-slate-900/40"
+                    style={{ width: `${columnWidths[c.name] || 150}px` }}
+                  >
+                    <div className="flex items-center gap-1 mr-2 justify-center">
+                      <span>🧮 {c.label || c.name}</span>
+                    </div>
+                    <div
+                      onMouseDown={(e) => handleResizeStart(c.name, e)}
+                      className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                      title={t.tooltipResize}
+                    />
+                  </th>
+                );
+              }
+
+              const isFrozen = c.originalIndex < 2;
+              const leftOffset = isFrozen ? getFrozenLeftOffset(c.originalIndex) : undefined;
+              const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === c.name;
+
+              return (
+                <th
+                  key={`col-${c.name}-${i}`}
+                  onClick={() => handleSort(c.name)}
+                  className={`p-2 font-mono text-[10px] text-slate-300 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-all border-r border-slate-900/40 relative group ${getAlignClass(
+                    c.alignment
+                  )} ${isFrozen ? "sticky z-30 bg-[#0d162d]" : "bg-slate-900"} ${
+                    isLastFrozen ? "border-r-2 border-r-indigo-500/80 shadow-[2px_0_5px_rgba(99,102,241,0.3)]" : ""
+                  }`}
+                  style={{ 
+                    width: `${columnWidths[c.name] || 150}px`,
+                    left: leftOffset,
+                  }}
+                  title={t.tooltipSort}
+                >
+                  <div className="flex items-center justify-between gap-1 mr-2">
+                    <span>{translateColLabel(c.name, c.label || "", currentLanguage)}</span>
+                    <span
+                      className={`text-[8px] font-bold px-0.5 py-0.2 rounded transition-all duration-300 ${
+                        sortConfig.key === c.name && sortConfig.direction !== "none"
+                          ? sortConfig.direction === "asc"
+                            ? "text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                            : "text-purple-400 bg-purple-950/40 border border-purple-500/20 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
+                          : "text-slate-600 border border-transparent group-hover:text-slate-400"
+                      }`}
+                    >
+                      {sortConfig.key === c.name
+                        ? sortConfig.direction === "asc"
+                          ? "▲"
+                          : sortConfig.direction === "desc"
+                          ? "▼"
+                          : "-"
+                        : "-"}
+                    </span>
+                  </div>
+                  <div
+                    onMouseDown={(e) => handleResizeStart(c.name, e)}
+                    className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
+                    title={t.tooltipResize}
+                  />
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-900 text-slate-300">
+          {gridData.length === 0 ? (
+            <tr>
+              <td colSpan={totalVisibleColSpan} className="p-8 text-center text-slate-500 italic">
+                {t.noData}
+              </td>
+            </tr>
+          ) : filteredRows.length === 0 ? (
+            <tr>
+              <td colSpan={totalVisibleColSpan} className="p-8 text-center text-cyan-400 bg-slate-950/80 border border-cyan-900/30 font-medium italic">
+                {t.noFilteredData.replace("{keyword}", filterKeyword)}
+              </td>
+            </tr>
+          ) : (
+            filteredRows.map(({ row, index: rIdx }, fIdx) => {
+              const hasError = validationErrors.hasOwnProperty(rIdx);
+              const isModified = ((currentRow, idx) => {
+                const originalRow = initialGridDataRef.current[idx];
+                if (!originalRow) return false;
+                return (parsedData.columns || []).some((col) => {
+                  const currentVal = currentRow[col.name] ?? "";
+                  const originalVal = originalRow[col.name] ?? "";
+                  return currentVal !== originalVal;
+                });
+              })(row, rIdx);
+              const isSelected = selectedRowIndex === rIdx;
+              
+              let rowBgClass = "";
+              if (hasError) {
+                rowBgClass = "bg-red-950/25 hover:bg-red-950/35 border-y border-red-500/30 text-red-200 shadow-[0_0_12px_rgba(239,68,68,0.15)]";
+              } else if (isSelected) {
+                rowBgClass = "bg-indigo-600/10 border-y border-indigo-500/30 font-bold";
+              } else if (isModified) {
+                rowBgClass = "bg-emerald-950/10 hover:bg-emerald-950/20";
+              } else {
+                rowBgClass = "hover:bg-slate-800/40";
+              }
+
+              return (
+                <tr
+                  key={rIdx}
+                  id={`grid-row-${rIdx}`}
+                  style={{
+                    height: parsedData?.bands?.detail
+                      ? `${parsedData.bands.detail / 2}px`
+                      : "40px",
+                  }}
+                  onClick={() => onSelectRow(rIdx)}
+                  className={`transition-all font-mono cursor-pointer group ${rowBgClass}`}
+                >
+                  <td
+                    className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${
+                      hasError
+                        ? "bg-[#251016] border-l-4 border-l-red-500"
+                        : isSelected
+                        ? "bg-[#141b38]"
+                        : isModified
+                        ? "bg-[#0c201d] border-l-4 border-l-emerald-500"
+                        : "bg-[#090e1c] group-hover:bg-[#11192e]"
+                    }`}
+                    style={{
+                      width: "48px",
+                      left: 0,
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (row.__originalIndex) {
+                        handleToggleRow(row.__originalIndex);
+                      }
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={row.__originalIndex ? selectedRowIds.has(row.__originalIndex) : false}
+                      onChange={() => {}}
+                      className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                    />
+                  </td>
+                  <td 
+                    className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${
+                      hasError
+                        ? "bg-[#251016] text-red-400 font-bold"
+                        : isSelected
+                        ? "bg-[#141b38] text-slate-300"
+                        : isModified 
+                        ? "bg-[#0c201d] text-emerald-400 font-bold" 
+                        : "bg-[#090e1c] group-hover:bg-[#11192e] text-slate-600"
+                    }`} 
+                    style={{ 
+                      width: "48px",
+                      left: 48,
+                    }}
+                  >
+                    {fIdx + 1}
+                  </td>
+                  {flattenedActiveColumns.map((col, cIdx) => {
+                    if (col.isComputed) {
+                      const mergedColumns = [
+                        ...parsedData.columns,
+                        ...(parsedData.arguments || []).map((arg) => ({
+                          name: arg.name,
+                          type: arg.type,
+                          dbname: arg.name,
+                        })),
+                      ];
+                      const res = evaluateDWExpression(
+                        col.expression,
+                        { ...row, ...argValues },
+                        mergedColumns
+                      );
+                      return (
+                        <td
+                          key={`comp-cell-${col.name}-${cIdx}`}
+                          className={`p-3 text-amber-400 font-bold bg-[#0f192b] border-r border-slate-900/40 ${getAlignClass(
+                            col.alignment
+                          )}`}
+                          title={col.expression}
+                          style={{ width: `${columnWidths[col.name] || 150}px` }}
+                        >
+                          {typeof res === "number" ? res.toLocaleString() : res}
+                        </td>
+                      );
+                    }
+
+                    let isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
+                    
+                    if (col.protect && col.protect.toLowerCase().includes("if")) {
+                      const evaluated = evaluateDWExpression(
+                        col.protect,
+                        { ...row, ...argValues },
+                        parsedData.columns
+                      );
+                      const isProtected = evaluated === 1 || evaluated === "1" || String(evaluated).toLowerCase() === "true";
+                      isCellReadOnly = col.tabsequence === "0" || isProtected;
+                    }
+
+                    const cellAlignClass = getAlignClass(col.alignment);
+                    const colType = (col.type || "").toLowerCase();
+
+                    const isFrozen = col.originalIndex < 2;
+                    const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
+                    const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
+
+                    const { tdClass, tdStyle, inputStyle } = getCellStyleAndClass(
+                      row,
+                      col.name,
+                      isFrozen,
+                      hasError,
+                      isSelected,
+                      isModified,
+                      isCellReadOnly
+                    );
+
+                    const renderGridCellInput = () => {
+                      const baseClass =
+                        "w-full bg-transparent px-2 py-1 text-xs border-0 focus:outline-none rounded transition-all";
+                      const stateClass = isCellReadOnly
+                        ? "bg-slate-950/60 text-slate-500 cursor-not-allowed italic"
+                        : "text-white focus:ring-1 focus:ring-indigo-500";
+                      const tabIndexValue = isCellReadOnly ? -1 : 0;
+
+                      const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+                        if (isCellReadOnly) return;
+                        e.currentTarget.select();
+                      };
+
+                      const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+                        const columnsCount = flattenedActiveColumns.length;
+                        const currentFilteredIdx = filteredRows.findIndex(item => item.index === rIdx);
+
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          if (currentFilteredIdx === -1) return;
+                          let nextFilteredIdx = currentFilteredIdx + 1;
+                          while (nextFilteredIdx < filteredRows.length) {
+                            const nextRow = filteredRows[nextFilteredIdx].index;
+                            const target = document.querySelector(
+                              `input[data-row="${nextRow}"][data-col="${col.name}"]`
+                            ) as HTMLInputElement | null;
+                            if (target && !target.readOnly && target.tabIndex !== -1) {
+                              target.focus();
+                              onSelectRow(nextRow);
+                              break;
+                            }
+                            nextFilteredIdx++;
+                          }
+                        } else if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          if (currentFilteredIdx === -1) return;
+                          let prevFilteredIdx = currentFilteredIdx - 1;
+                          while (prevFilteredIdx >= 0) {
+                            const prevRow = filteredRows[prevFilteredIdx].index;
+                            const target = document.querySelector(
+                              `input[data-row="${prevRow}"][data-col="${col.name}"]`
+                            ) as HTMLInputElement | null;
+                            if (target && !target.readOnly && target.tabIndex !== -1) {
+                              target.focus();
+                              onSelectRow(prevRow);
+                              break;
+                            }
+                            prevFilteredIdx--;
+                          }
+                        } else if (e.key === "ArrowRight") {
+                          e.preventDefault();
+                          let nextColIdx = cIdx + 1;
+                          while (nextColIdx < columnsCount) {
+                            const nextCol = flattenedActiveColumns[nextColIdx];
+                            if (!nextCol.isComputed) {
+                              const target = document.querySelector(
+                                `input[data-row="${rIdx}"][data-col="${nextCol.name}"]`
+                              ) as HTMLInputElement | null;
+                              if (target && !target.readOnly && target.tabIndex !== -1) {
+                                target.focus();
+                                break;
+                              }
+                            }
+                            nextColIdx++;
+                          }
+                        } else if (e.key === "ArrowLeft") {
+                          e.preventDefault();
+                          let prevColIdx = cIdx - 1;
+                          while (prevColIdx >= 0) {
+                            const prevCol = flattenedActiveColumns[prevColIdx];
+                            if (!prevCol.isComputed) {
+                              const target = document.querySelector(
+                                `input[data-row="${rIdx}"][data-col="${prevCol.name}"]`
+                              ) as HTMLInputElement | null;
+                              if (target && !target.readOnly && target.tabIndex !== -1) {
+                                target.focus();
+                                break;
+                              }
+                            }
+                            prevColIdx--;
+                          }
+                        } else if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (currentFilteredIdx === -1) return;
+                          let targetFound = false;
+
+                          let nextFilteredIdx = currentFilteredIdx + 1;
+                          while (nextFilteredIdx < filteredRows.length) {
+                            const nextRow = filteredRows[nextFilteredIdx].index;
+                            const target = document.querySelector(
+                                `input[data-row="${nextRow}"][data-col="${col.name}"]`
+                            ) as HTMLInputElement | null;
+                            if (target && !target.readOnly && target.tabIndex !== -1) {
+                              target.focus();
+                              onSelectRow(nextRow);
+                                targetFound = true;
+                              break;
+                            }
+                            nextFilteredIdx++;
+                          }
+
+                          if (!targetFound) {
+                            let startFilteredIdx = currentFilteredIdx;
+                            let startCol = cIdx + 1;
+                            for (let f = startFilteredIdx; f < filteredRows.length; f++) {
+                              const targetRow = filteredRows[f].index;
+                              const startC = (f === startFilteredIdx) ? startCol : 0;
+                              for (let c = startC; c < columnsCount; c++) {
+                                const targetCol = flattenedActiveColumns[c];
+                                if (!targetCol.isComputed) {
+                                  const target = document.querySelector(
+                                    `input[data-row="${targetRow}"][data-col="${targetCol.name}"]`
+                                  ) as HTMLInputElement | null;
+                                  if (target && !target.readOnly && target.tabIndex !== -1) {
+                                    target.focus();
+                                    onSelectRow(targetRow);
+                                    targetFound = true;
+                                    break;
+                                  }
+                                }
+                              }
+                              if (targetFound) break;
+                            }
+                          }
+                        } else if (e.key === " ") {
+                          e.preventDefault();
+                          const currentRowObj = gridData[rIdx];
+                          if (currentRowObj && currentRowObj.__originalIndex) {
+                            handleToggleRow(currentRowObj.__originalIndex);
+                          }
+                        }
+                      };
+
+                      if (
+                        colType.includes("date") ||
+                        colType.includes("time") ||
+                        colType.includes("timestamp")
+                      ) {
+                        return (
+                          <input
+                            type="date"
+                            value={row[col.name] ?? ""}
+                            readOnly={isCellReadOnly}
+                            tabIndex={tabIndexValue}
+                            data-row={rIdx}
+                            data-col={col.name}
+                            onChange={(e) => {
+                              if (isCellReadOnly) return;
+                              setGridData((prev) => {
+                                const next = [...prev];
+                                if (next[rIdx]) {
+                                  next[rIdx][col.name] = e.target.value;
+                                  if (next[rIdx].row_status === "New") {
+                                    next[rIdx].row_status = "NewModified";
+                                  }
+                                }
+                                return next;
+                              });
+                            }}
+                            onClick={(e) => {
+                              if (!isCellReadOnly) {
+                                try {
+                                  e.currentTarget.showPicker();
+                                } catch (err) {}
+                              }
+                            }}
+                            onFocus={(e) => {
+                              handleFocus(e);
+                              if (!isCellReadOnly) {
+                                try {
+                                  e.currentTarget.showPicker();
+                                } catch (err) {}
+                              }
+                            }}
+                            onKeyDown={handleKeyDown}
+                            style={inputStyle}
+                            className={`${baseClass} ${cellAlignClass} ${stateClass}`}
+                          />
+                        );
+                        }
+
+                        if (isNumericColumn(col.type)) {
+                          return (
+                            <input
+                              type="text"
+                              value={formatNumberWithCommas(row[col.name] ?? "")}
+                              readOnly={isCellReadOnly}
+                              tabIndex={tabIndexValue}
+                              data-row={rIdx}
+                              data-col={col.name}
+                              onChange={(e) => {
+                                if (isCellReadOnly) return;
+                                const val = formatNumberWithCommas(e.target.value);
+                                setGridData((prev) => {
+                                  const next = [...prev];
+                                  if (next[rIdx]) {
+                                    next[rIdx][col.name] = val;
+                                    if (next[rIdx].row_status === "New") {
+                                      next[rIdx].row_status = "NewModified";
+                                    }
+                                  }
+                                  return next;
+                                });
+                              }}
+                              onFocus={handleFocus}
+                              onKeyDown={handleKeyDown}
+                              style={inputStyle}
+                              className={`${baseClass} text-right ${stateClass}`}
+                            />
+                          );
+                        }
+
+                        return (
+                          <input
+                            type="text"
+                            value={row[col.name] ?? ""}
+                            readOnly={isCellReadOnly}
+                            tabIndex={tabIndexValue}
+                            data-row={rIdx}
+                            data-col={col.name}
+                            onChange={(e) => {
+                              if (isCellReadOnly) return;
+                              setGridData((prev) => {
+                                  const next = [...prev];
+                                  if (next[rIdx]) {
+                                    next[rIdx][col.name] = e.target.value;
+                                    if (next[rIdx].row_status === "New") {
+                                      next[rIdx].row_status = "NewModified";
+                                    }
+                                  }
+                                  return next;
+                                });
+                            }}
+                            onFocus={handleFocus}
+                            onKeyDown={handleKeyDown}
+                            style={inputStyle}
+                            className={`${baseClass} ${cellAlignClass} ${stateClass}`}
+                          />
+                        );
+                    };
+
+                    return (
+                      <td 
+                        key={`cell-${col.name}-${cIdx}`} 
+                        className={`p-1 border-r border-slate-900/40 ${
+                          isFrozen ? "sticky z-10" : ""
+                        } ${
+                          isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""
+                        } ${tdClass}`} 
+                        style={{ 
+                          width: `${columnWidths[col.name] || 150}px`,
+                          left: leftOffset,
+                          ...tdStyle,
+                        }}
+                      >
+                        {renderGridCellInput()}
+                      </td>
+                    );
+                  })}
+                  <td className="p-1 border-l border-slate-900/40 text-center w-20 print:hidden" style={{ width: "80px" }}>
+                    {isModified && (
+                      <button
+                        onClick={() => handleUndoRow(rIdx)}
+                        className="px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 hover:text-amber-400 border border-amber-500/20 rounded text-[10px] font-bold transition-all opacity-70 animate-pulse cursor-pointer"
+                        title={t.tooltipUndo}
+                      >
+                        {t.undo}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+        <tfoot className="sticky bottom-0 bg-slate-950 border-t-2 border-cyan-500/80 z-30 shadow-[0_-4px_15px_rgba(6,182,212,0.25)] print:static print:border-t print:shadow-none">
+          <tr className="bg-slate-900/90 text-cyan-400 font-bold border-b border-slate-900/60 font-mono select-none">
+            <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40" style={{ width: "48px", left: 0 }}>
+            </td>
+            <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40 text-[10px] text-cyan-500" style={{ width: "48px", left: 48 }}>
+              ∑
+            </td>
+            {flattenedActiveColumns.map((col, cIdx) => {
+              if (col.isComputed) {
+                return (
+                  <td key={`sum-comp-${col.name}-${cIdx}`} className="p-3 text-right bg-[#0f192b] border-r border-slate-900/40 text-slate-600 italic text-[10px]" style={{ width: `${columnWidths[col.name] || 150}px` }}>
+                    N/A
+                  </td>
+                );
+              }
+
+              const isFrozen = col.originalIndex < 2;
+              const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
+              const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
+              const isNum = isNumericColumn(col.type);
+
+              let cellText = "";
+              if (col.originalIndex === 0) {
+                cellText = currentLanguage === "ko" ? "합계" : "Sum";
+              } else if (isNum) {
+                cellText = formatNumberWithCommas(String(footerSummaries.sums[col.name] ?? 0));
+              }
+
+              return (
+                <td
+                  key={`sum-cell-${col.name}-${cIdx}`}
+                  className={`p-3 border-r border-slate-900/40 ${isFrozen ? "sticky z-10 bg-[#090e1c]" : ""} ${isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""} ${isNum ? "text-right" : "text-center text-slate-500"}`}
+                  style={{
+                    width: `${columnWidths[col.name] || 150}px`,
+                    left: leftOffset,
+                  }}
+                >
+                  {cellText}
+                </td>
+              );
+            })}
+            <td className="p-3 border-l border-slate-900/40 bg-slate-900 text-center w-20 print:hidden" style={{ width: "80px" }}>
+            </td>
+          </tr>
+
+          <tr className="bg-slate-900/90 text-amber-400 font-bold font-mono select-none">
+            <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40" style={{ width: "48px", left: 0 }}>
+            </td>
+            <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40 text-[10px] text-amber-500" style={{ width: "48px", left: 48 }}>
+              μ
+            </td>
+            {flattenedActiveColumns.map((col, cIdx) => {
+              if (col.isComputed) {
+                return (
+                  <td key={`avg-comp-${col.name}-${cIdx}`} className="p-3 text-right bg-[#0f192b] border-r border-slate-900/40 text-slate-600 italic text-[10px]" style={{ width: `${columnWidths[col.name] || 150}px` }}>
+                    N/A
+                  </td>
+                );
+              }
+
+              const isFrozen = col.originalIndex < 2;
+              const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
+              const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
+              const isNum = isNumericColumn(col.type);
+
+              let cellText = "";
+              if (col.originalIndex === 0) {
+                cellText = currentLanguage === "ko" ? "평균" : "Avg";
+              } else if (isNum) {
+                const avgVal = footerSummaries.avgs[col.name] ?? 0;
+                cellText = formatNumberWithCommas(String(Number(avgVal.toFixed(2))));
+              }
+
+              return (
+                <td
+                  key={`avg-cell-${col.name}-${cIdx}`}
+                  className={`p-3 border-r border-slate-900/40 ${isFrozen ? "sticky z-10 bg-[#090e1c]" : ""} ${isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""} ${isNum ? "text-right" : "text-center text-slate-500"}`}
+                  style={{
+                    width: `${columnWidths[col.name] || 150}px`,
+                    left: leftOffset,
+                  }}
+                >
+                  {cellText}
+                </td>
+              );
+            })}
+            <td className="p-3 border-l border-slate-900/40 bg-slate-900 text-center w-20 print:hidden" style={{ width: "80px" }}>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </>
+  );
+};
+
 export default function GridPreview({
   parsedData,
   gridData,
@@ -1699,6 +2590,61 @@ export default function GridPreview({
     window.print();
   };
 
+  const handleResetBoundary = () => {
+    if (snapshotRef.current.length > 0) {
+      const resetSnapshot = JSON.parse(JSON.stringify(snapshotRef.current));
+      setGridData(resetSnapshot);
+    } else {
+      setGridData([]);
+    }
+    setFilterKeyword("");
+    setDeleteBuffer([]);
+    setSelectedRowIds(new Set());
+    setRowSearchKeyword("");
+    setMatchedRowIndices([]);
+    setCurrentMatchPointer(-1);
+    
+    setDetailData(JSON.parse(JSON.stringify(MOCK_DETAIL_DATA)));
+    setDetailDeleteBuffer([]);
+    setSelectedDetailRowIndex(0);
+    initialDetailDataRef.current = JSON.parse(JSON.stringify(MOCK_DETAIL_DATA));
+
+    handleRetrieve();
+  };
+
+  const ErrorFallback = (error: Error | null, reset: () => void) => {
+    return (
+      <div className="w-full min-h-[260px] bg-slate-950/90 border border-red-500/50 rounded-xl p-6 flex flex-col justify-center items-center gap-4 text-center backdrop-blur-md shadow-[0_0_30px_rgba(239,68,68,0.3)] select-none">
+        <div className="text-red-500 text-5xl animate-pulse">☠️</div>
+        <div className="flex flex-col gap-1">
+          <h4 className="text-white text-base font-extrabold tracking-tight">
+            그리드 런타임 [ˈrʌntaɪm] 예외 격리 방어선 작동
+          </h4>
+          <p className="text-[11px] text-red-400 font-mono">
+            [ˈerər] [ˈbaʊndri] 포착: 렌더링 크래시 및 시스템 붕괴를 안전하게 격리했습니다.
+          </p>
+        </div>
+        
+        <div className="w-full max-w-lg bg-black/60 border border-red-950/60 rounded-lg p-3 text-left">
+          <div className="text-[10px] font-mono text-red-500 font-bold uppercase tracking-wider mb-1 border-b border-red-950/30 pb-1">
+            Error Message
+          </div>
+          <pre className="text-[10px] font-mono text-red-200 overflow-auto max-h-24 scrollbar-thin whitespace-pre-wrap leading-relaxed select-all">
+            {error ? error.message : "알 수 없는 런타임 예외가 발생했습니다."}
+            {error?.stack && `\n\n${error.stack.split("\n").slice(0, 3).join("\n")}`}
+          </pre>
+        </div>
+
+        <button
+          onClick={reset}
+          className="px-5 py-2.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-500/50 hover:border-red-400 text-red-400 hover:text-white text-xs font-bold transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] hover:shadow-[0_0_20px_rgba(239,68,68,0.6)] cursor-pointer flex items-center gap-2 hover:scale-[1.02] active:scale-95 duration-200"
+        >
+          <span>세션 재조회 및 리셋 ↺</span>
+        </button>
+      </div>
+    );
+  };
+
   // [Day 24 작업] 단 하나의 컬럼이라도 값의 변동이 생겼는지 감지하는 판별 로직 (isRowModified)
   const isRowModified = (currentRow: { [key: string]: string }, rIdx: number): boolean => {
     const originalRow = initialGridDataRef.current[rIdx];
@@ -2281,695 +3227,45 @@ export default function GridPreview({
 
       {/* 고속 입력용 가변 뷰포트 및 스크롤 최적화 구역 */}
       <div className="relative overflow-x-auto overflow-y-auto border border-slate-900 rounded-xl min-h-[260px] max-h-[400px] scrollbar-thin">
-        {/* [Day 32 작업] 데이터 조회 중 로딩 레이어 오버레이 */}
-        {isLoading && (
-          <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex flex-col items-center justify-center gap-3 z-30 transition-all">
-            <div className="w-9 h-9 rounded-full border-[3px] border-indigo-500/10 border-t-indigo-500 animate-spin shadow-[0_0_15px_rgba(99,102,241,0.4)]"></div>
-            <div className="flex flex-col items-center gap-0.5">
-              <span className="text-xs font-bold text-indigo-400 tracking-wide animate-pulse">{t.loading}</span>
-              <span className="text-[9px] font-mono text-slate-500">{t.loadingSub}</span>
-            </div>
-          </div>
-        )}
-
-        <table className="text-left text-xs border-collapse table-fixed" style={{ width: `${totalTableWidth}px` }}>
-          <thead className="bg-slate-900 text-slate-400 font-bold sticky top-0 border-b border-slate-900 z-10">
-            {/* 1단: 상위 그룹 헤더 행 */}
-            <tr
-              style={{
-                height: parsedData?.bands?.header
-                  ? `${parsedData.bands.header / 4}px`
-                  : "24px",
-              }}
-            >
-              {/* 체크박스, No.는 2단 병합(rowSpan=2)하여 1단에 위치 */}
-              <th 
-                rowSpan={2}
-                className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
-                style={{ width: "48px", left: 0 }}
-                title={t.tooltipCheckbox}
-              >
-                <input
-                  type="checkbox"
-                  checked={isAllFilteredSelected}
-                  onChange={handleToggleAll}
-                  className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
-                />
-              </th>
-              <th 
-                rowSpan={2}
-                className="p-3 text-center bg-slate-900 border-r border-slate-900/40 sticky left-0 z-30" 
-                style={{ width: "48px", left: 48 }}
-              >
-                {t.colNo}
-              </th>
-
-              {/* [Day 46 작업] 상위 그룹 헤더 렌더링 블록 */}
-              {headerGroups.map((group) => {
-                const isLastFrozen = group.isSticky && visibleFrozenColumns.length > 0;
-                return (
-                  <th
-                    key={group.key}
-                    colSpan={group.colSpan}
-                    className={`p-2 text-center text-[11px] uppercase tracking-wider font-extrabold border-r border-slate-900/40 transition-all select-none ${
-                      group.isSticky ? "sticky z-30 bg-[#0d162d]" : "bg-slate-900"
-                    } ${
-                      group.key === "basic"
-                        ? "text-cyan-400 border-b border-cyan-950/40 shadow-[inset_0_-1px_0_rgba(34,211,238,0.2)]"
-                        : group.key === "dept"
-                        ? "text-indigo-400 border-b border-indigo-950/40 shadow-[inset_0_-1px_0_rgba(99,102,241,0.2)]"
-                        : "text-purple-400 border-b border-purple-950/40 shadow-[inset_0_-1px_0_rgba(168,85,247,0.2)]"
-                    } ${
-                      isLastFrozen && group.key === "basic"
-                        ? "border-r-2 border-r-indigo-500/80 shadow-[2px_0_5px_rgba(99,102,241,0.3)]"
-                        : ""
-                    }`}
-                    style={{
-                      width: `${group.width}px`,
-                      left: group.leftOffset,
-                    }}
-                  >
-                    {group.label}
-                  </th>
-                );
-              })}
-
-              {/* 제어 컬럼도 2단 병합(rowSpan=2) */}
-              <th 
-                rowSpan={2}
-                className="p-3 text-center text-slate-400 font-bold border-l border-slate-900/40 bg-slate-900 print:hidden" 
-                style={{ width: "80px" }}
-              >
-                {t.colControl}
-              </th>
-            </tr>
-
-            {/* 2단: 하위 개별 컬럼 헤더 행 */}
-            <tr
-              style={{
-                height: parsedData?.bands?.header
-                  ? `${parsedData.bands.header / 4}px`
-                  : "24px",
-              }}
-            >
-              {/* 이미 rowSpan=2로 처리된 체크박스, No., 제어는 배제 */}
-              {flattenedActiveColumns.map((c, i) => {
-                if (c.isComputed) {
-                  // 계산식 컬럼
-                  return (
-                    <th
-                      key={`comp-${c.name}-${i}`}
-                      className="p-2 text-amber-400 bg-indigo-950/20 relative group select-none text-[10px] font-mono border-r border-slate-900/40"
-                      style={{ width: `${columnWidths[c.name] || 150}px` }}
-                    >
-                      <div className="flex items-center gap-1 mr-2 justify-center">
-                        <span>🧮 {c.label || c.name}</span>
-                      </div>
-                      <div
-                        onMouseDown={(e) => handleResizeStart(c.name, e)}
-                        className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
-                        title={t.tooltipResize}
-                      />
-                    </th>
-                  );
-                }
-
-                // 일반 컬럼
-                const isFrozen = c.originalIndex < 2;
-                const leftOffset = isFrozen ? getFrozenLeftOffset(c.originalIndex) : undefined;
-                const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === c.name;
-
-                return (
-                  <th
-                    key={`col-${c.name}-${i}`}
-                    onClick={() => handleSort(c.name)}
-                    className={`p-2 font-mono text-[10px] text-slate-300 cursor-pointer select-none hover:bg-slate-800 hover:text-white transition-all border-r border-slate-900/40 relative group ${getAlignClass(
-                      c.alignment
-                    )} ${isFrozen ? "sticky z-30 bg-[#0d162d]" : "bg-slate-900"} ${
-                      isLastFrozen ? "border-r-2 border-r-indigo-500/80 shadow-[2px_0_5px_rgba(99,102,241,0.3)]" : ""
-                    }`}
-                    style={{ 
-                      width: `${columnWidths[c.name] || 150}px`,
-                      left: leftOffset,
-                    }}
-                    title={t.tooltipSort}
-                  >
-                    <div className="flex items-center justify-between gap-1 mr-2">
-                      <span>{translateColLabel(c.name, c.label || "", currentLanguage)}</span>
-                      <span
-                        className={`text-[8px] font-bold px-0.5 py-0.2 rounded transition-all duration-300 ${
-                          sortConfig.key === c.name && sortConfig.direction !== "none"
-                            ? sortConfig.direction === "asc"
-                              ? "text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
-                              : "text-purple-400 bg-purple-950/40 border border-purple-500/20 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
-                            : "text-slate-600 border border-transparent group-hover:text-slate-400"
-                        }`}
-                      >
-                        {sortConfig.key === c.name
-                          ? sortConfig.direction === "asc"
-                            ? "▲"
-                            : sortConfig.direction === "desc"
-                            ? "▼"
-                            : "-"
-                          : "-"}
-                      </span>
-                    </div>
-                    <div
-                      onMouseDown={(e) => handleResizeStart(c.name, e)}
-                      className="absolute top-0 right-0 h-full w-1 cursor-col-resize select-none z-20 hover:bg-cyan-400 active:bg-cyan-300 bg-slate-800/30 transition-all duration-200 hover:shadow-[0_0_8px_rgba(34,211,238,0.8)]"
-                      title={t.tooltipResize}
-                    />
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-900 text-slate-300">
-            {gridData.length === 0 ? (
-              <tr>
-                <td colSpan={totalVisibleColSpan} className="p-8 text-center text-slate-500 italic">
-                  {t.noData}
-                </td>
-              </tr>
-            ) : filteredRows.length === 0 ? (
-              <tr>
-                <td colSpan={totalVisibleColSpan} className="p-8 text-center text-cyan-400 bg-slate-950/80 border border-cyan-900/30 font-medium italic">
-                  {t.noFilteredData.replace("{keyword}", filterKeyword)}
-                </td>
-              </tr>
-            ) : (
-              filteredRows.map(({ row, index: rIdx }, fIdx) => {
-                const hasError = validationErrors.hasOwnProperty(rIdx);
-                const isModified = isRowModified(row, rIdx);
-                const isSelected = selectedRowIndex === rIdx;
-                
-                let rowBgClass = "";
-                if (hasError) {
-                  rowBgClass = "bg-red-950/25 hover:bg-red-950/35 border-y border-red-500/30 text-red-200 shadow-[0_0_12px_rgba(239,68,68,0.15)]";
-                } else if (isSelected) {
-                  rowBgClass = "bg-indigo-600/10 border-y border-indigo-500/30 font-bold";
-                } else if (isModified) {
-                  rowBgClass = "bg-emerald-950/10 hover:bg-emerald-950/20";
-                } else {
-                  rowBgClass = "hover:bg-slate-800/40";
-                }
-
-                return (
-                  <tr
-                    key={rIdx}
-                    id={`grid-row-${rIdx}`}
-                    style={{
-                      height: parsedData?.bands?.detail
-                        ? `${parsedData.bands.detail / 2}px`
-                        : "40px",
-                    }}
-                    onClick={() => onSelectRow(rIdx)}
-                    className={`transition-all font-mono cursor-pointer group ${rowBgClass}`}
-                  >
-                    {/* [Day 44 작업] 체크박스 다중 선택 개별 선택 셀 sticky left: 0 */}
-                    <td
-                      className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${
-                        hasError
-                          ? "bg-[#251016] border-l-4 border-l-red-500"
-                          : isSelected
-                          ? "bg-[#141b38]"
-                          : isModified
-                          ? "bg-[#0c201d] border-l-4 border-l-emerald-500"
-                          : "bg-[#090e1c] group-hover:bg-[#11192e]"
-                      }`}
-                      style={{
-                        width: "48px",
-                        left: 0,
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation(); // 행 선택 클릭 이벤트 전파 차단
-                        if (row.__originalIndex) {
-                          handleToggleRow(row.__originalIndex);
-                        }
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={row.__originalIndex ? selectedRowIds.has(row.__originalIndex) : false}
-                        onChange={() => {}} // onClick에서 처리하므로 빈 핸들러
-                        className="rounded border-slate-800 bg-slate-950 text-cyan-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-3.5 h-3.5 cursor-pointer accent-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
-                      />
-                    </td>
-                    {/* [Day 38 작업] No. 열 sticky 고정 적용 및 오프셋 스타일 바인딩 */}
-                    <td 
-                      className={`p-3 text-center transition-all sticky left-0 z-10 border-r border-slate-900/40 ${
-                        hasError
-                          ? "bg-[#251016] text-red-400 font-bold"
-                          : isSelected
-                          ? "bg-[#141b38] text-slate-300"
-                          : isModified 
-                          ? "bg-[#0c201d] text-emerald-400 font-bold" 
-                          : "bg-[#090e1c] group-hover:bg-[#11192e] text-slate-600"
-                      }`} 
-                      style={{ 
-                        width: "48px",
-                        left: 48,
-                      }}
-                    >
-                      {fIdx + 1}
-                    </td>
-                    {flattenedActiveColumns.map((col, cIdx) => {
-                      if (col.isComputed) {
-                        // 계산식 컬럼 렌더링
-                        const mergedColumns = [
-                          ...parsedData.columns,
-                          ...(parsedData.arguments || []).map((arg) => ({
-                            name: arg.name,
-                            type: arg.type,
-                            dbname: arg.name,
-                          })),
-                        ];
-                        const res = evaluateDWExpression(
-                          col.expression,
-                          { ...row, ...argValues },
-                          mergedColumns
-                        );
-                        return (
-                          <td
-                            key={`comp-cell-${col.name}-${cIdx}`}
-                            className={`p-3 text-amber-400 font-bold bg-[#0f192b] border-r border-slate-900/40 ${getAlignClass(
-                              col.alignment
-                            )}`}
-                            title={col.expression}
-                            style={{ width: `${columnWidths[col.name] || 150}px` }}
-                          >
-                            {typeof res === "number" ? res.toLocaleString() : res}
-                          </td>
-                        );
-                      }
-
-                      // 일반 컬럼 렌더링
-                      let isCellReadOnly = col.tabsequence === "0" || col.protect === "1";
-                      
-                      if (col.protect && col.protect.toLowerCase().includes("if")) {
-                        const evaluated = evaluateDWExpression(
-                          col.protect,
-                          { ...row, ...argValues },
-                          parsedData.columns
-                        );
-                        const isProtected = evaluated === 1 || evaluated === "1" || String(evaluated).toLowerCase() === "true";
-                        isCellReadOnly = col.tabsequence === "0" || isProtected;
-                      }
-
-                      const cellAlignClass = getAlignClass(col.alignment);
-                      const colType = (col.type || "").toLowerCase();
-
-                      const isFrozen = col.originalIndex < 2;
-                      const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
-                      const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
-
-                      // [Day 48 작업] 셀 <td> 내부 스타일 바인딩 블록
-                      // 
-                      // [인클로저 스타일 평가 및 렌더링 우선순위 연산]
-                      // 1순위: validation 오류(hasError) -> 붉은빛 경고 스타일 바인딩
-                      // 2순위: 수식 기반 Protect 행 잠금(isCellReadOnly) -> 회색조 차단 폰트 및 이탤릭체 적용
-                      // 3순위: 선택 행 하이라이트(isSelected) -> 네온 인디고 테두리 및 흐린 글로우 적용
-                      // 4순위: 런타임 데이터 연동형 조건부 서식(condStyle) -> 실시간 수치/상태 연동 동적 스타일(에메랄드/로즈/앰버 네온) 바인딩
-                      // 5순위: 롤백 변동 행(isModified) -> 소프트 에메랄드 은은한 백그라운드
-                      const { tdClass, tdStyle, inputStyle } = getCellStyleAndClass(
-                        row,
-                        col.name,
-                        isFrozen,
-                        hasError,
-                        isSelected,
-                        isModified,
-                        isCellReadOnly
-                      );
-
-                      const renderGridCellInput = () => {
-                        const baseClass =
-                          "w-full bg-transparent px-2 py-1 text-xs border-0 focus:outline-none rounded transition-all";
-                        const stateClass = isCellReadOnly
-                          ? "bg-slate-950/60 text-slate-500 cursor-not-allowed italic"
-                          : "text-white focus:ring-1 focus:ring-indigo-500";
-                        const tabIndexValue = isCellReadOnly ? -1 : 0;
-
-                        const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-                          if (isCellReadOnly) return;
-                          e.currentTarget.select();
-                        };
-
-                        const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-                          const columnsCount = flattenedActiveColumns.length;
-                          const currentFilteredIdx = filteredRows.findIndex(item => item.index === rIdx);
-
-                          if (e.key === "ArrowDown") {
-                            e.preventDefault();
-                            if (currentFilteredIdx === -1) return;
-                            let nextFilteredIdx = currentFilteredIdx + 1;
-                            while (nextFilteredIdx < filteredRows.length) {
-                              const nextRow = filteredRows[nextFilteredIdx].index;
-                              const target = document.querySelector(
-                                `input[data-row="${nextRow}"][data-col="${col.name}"]`
-                              ) as HTMLInputElement | null;
-                              if (target && !target.readOnly && target.tabIndex !== -1) {
-                                target.focus();
-                                onSelectRow(nextRow);
-                                break;
-                              }
-                              nextFilteredIdx++;
-                            }
-                          } else if (e.key === "ArrowUp") {
-                            e.preventDefault();
-                            if (currentFilteredIdx === -1) return;
-                            let prevFilteredIdx = currentFilteredIdx - 1;
-                            while (prevFilteredIdx >= 0) {
-                              const prevRow = filteredRows[prevFilteredIdx].index;
-                              const target = document.querySelector(
-                                `input[data-row="${prevRow}"][data-col="${col.name}"]`
-                              ) as HTMLInputElement | null;
-                              if (target && !target.readOnly && target.tabIndex !== -1) {
-                                target.focus();
-                                onSelectRow(prevRow);
-                                break;
-                              }
-                              prevFilteredIdx--;
-                            }
-                          } else if (e.key === "ArrowRight") {
-                            e.preventDefault();
-                            let nextColIdx = cIdx + 1;
-                            while (nextColIdx < columnsCount) {
-                              const nextCol = flattenedActiveColumns[nextColIdx];
-                              if (!nextCol.isComputed) {
-                                const target = document.querySelector(
-                                  `input[data-row="${rIdx}"][data-col="${nextCol.name}"]`
-                                ) as HTMLInputElement | null;
-                                if (target && !target.readOnly && target.tabIndex !== -1) {
-                                  target.focus();
-                                  break;
-                                }
-                              }
-                              nextColIdx++;
-                            }
-                          } else if (e.key === "ArrowLeft") {
-                            e.preventDefault();
-                            let prevColIdx = cIdx - 1;
-                            while (prevColIdx >= 0) {
-                              const prevCol = flattenedActiveColumns[prevColIdx];
-                              if (!prevCol.isComputed) {
-                                const target = document.querySelector(
-                                  `input[data-row="${rIdx}"][data-col="${prevCol.name}"]`
-                                ) as HTMLInputElement | null;
-                                if (target && !target.readOnly && target.tabIndex !== -1) {
-                                  target.focus();
-                                  break;
-                                }
-                              }
-                              prevColIdx--;
-                            }
-                          } else if (e.key === "Enter") {
-                            e.preventDefault();
-                            if (currentFilteredIdx === -1) return;
-                            let targetFound = false;
-
-                            let nextFilteredIdx = currentFilteredIdx + 1;
-                            while (nextFilteredIdx < filteredRows.length) {
-                              const nextRow = filteredRows[nextFilteredIdx].index;
-                              const target = document.querySelector(
-                                  `input[data-row="${nextRow}"][data-col="${col.name}"]`
-                              ) as HTMLInputElement | null;
-                              if (target && !target.readOnly && target.tabIndex !== -1) {
-                                target.focus();
-                                onSelectRow(nextRow);
-                                  targetFound = true;
-                                break;
-                              }
-                              nextFilteredIdx++;
-                            }
-
-                            if (!targetFound) {
-                              let startFilteredIdx = currentFilteredIdx;
-                              let startCol = cIdx + 1;
-                              for (let f = startFilteredIdx; f < filteredRows.length; f++) {
-                                const targetRow = filteredRows[f].index;
-                                const startC = (f === startFilteredIdx) ? startCol : 0;
-                                for (let c = startC; c < columnsCount; c++) {
-                                  const targetCol = flattenedActiveColumns[c];
-                                  if (!targetCol.isComputed) {
-                                    const target = document.querySelector(
-                                      `input[data-row="${targetRow}"][data-col="${targetCol.name}"]`
-                                    ) as HTMLInputElement | null;
-                                    if (target && !target.readOnly && target.tabIndex !== -1) {
-                                      target.focus();
-                                      onSelectRow(targetRow);
-                                      targetFound = true;
-                                      break;
-                                    }
-                                  }
-                                }
-                                if (targetFound) break;
-                              }
-                            }
-                          } else if (e.key === " ") {
-                            e.preventDefault();
-                            const currentRowObj = gridData[rIdx];
-                            if (currentRowObj && currentRowObj.__originalIndex) {
-                              handleToggleRow(currentRowObj.__originalIndex);
-                            }
-                          }
-                        };
-
-                        if (
-                          colType.includes("date") ||
-                          colType.includes("time") ||
-                          colType.includes("timestamp")
-                        ) {
-                          return (
-                            <input
-                              type="date"
-                              value={row[col.name] ?? ""}
-                              readOnly={isCellReadOnly}
-                              tabIndex={tabIndexValue}
-                              data-row={rIdx}
-                              data-col={col.name}
-                              onChange={(e) => {
-                                if (isCellReadOnly) return;
-                                setGridData((prev) => {
-                                  const next = [...prev];
-                                  if (next[rIdx]) {
-                                    next[rIdx][col.name] = e.target.value;
-                                    if (next[rIdx].row_status === "New") {
-                                      next[rIdx].row_status = "NewModified";
-                                    }
-                                  }
-                                  return next;
-                                });
-                              }}
-                              onClick={(e) => {
-                                if (!isCellReadOnly) {
-                                  try {
-                                    e.currentTarget.showPicker();
-                                  } catch (err) {}
-                                }
-                              }}
-                              onFocus={(e) => {
-                                handleFocus(e);
-                                if (!isCellReadOnly) {
-                                  try {
-                                    e.currentTarget.showPicker();
-                                  } catch (err) {}
-                                }
-                              }}
-                              onKeyDown={handleKeyDown}
-                              style={inputStyle}
-                              className={`${baseClass} ${cellAlignClass} ${stateClass}`}
-                            />
-                          );
-                        }
-
-                        if (isNumericColumn(col.type)) {
-                          return (
-                            <input
-                              type="text"
-                              value={formatNumberWithCommas(row[col.name] ?? "")}
-                              readOnly={isCellReadOnly}
-                              tabIndex={tabIndexValue}
-                              data-row={rIdx}
-                              data-col={col.name}
-                              onChange={(e) => {
-                                if (isCellReadOnly) return;
-                                const val = formatNumberWithCommas(e.target.value);
-                                setGridData((prev) => {
-                                  const next = [...prev];
-                                  if (next[rIdx]) {
-                                    next[rIdx][col.name] = val;
-                                    if (next[rIdx].row_status === "New") {
-                                      next[rIdx].row_status = "NewModified";
-                                    }
-                                  }
-                                  return next;
-                                });
-                              }}
-                              onFocus={handleFocus}
-                              onKeyDown={handleKeyDown}
-                              style={inputStyle}
-                              className={`${baseClass} text-right ${stateClass}`}
-                            />
-                          );
-                        }
-
-                        return (
-                          <input
-                            type="text"
-                            value={row[col.name] ?? ""}
-                            readOnly={isCellReadOnly}
-                            tabIndex={tabIndexValue}
-                            data-row={rIdx}
-                            data-col={col.name}
-                            onChange={(e) => {
-                              if (isCellReadOnly) return;
-                              setGridData((prev) => {
-                                  const next = [...prev];
-                                  if (next[rIdx]) {
-                                    next[rIdx][col.name] = e.target.value;
-                                    if (next[rIdx].row_status === "New") {
-                                      next[rIdx].row_status = "NewModified";
-                                    }
-                                  }
-                                  return next;
-                                });
-                            }}
-                            onFocus={handleFocus}
-                            onKeyDown={handleKeyDown}
-                            style={inputStyle}
-                            className={`${baseClass} ${cellAlignClass} ${stateClass}`}
-                          />
-                        );
-                      };
-
-                      return (
-                        <td 
-                          key={`cell-${col.name}-${cIdx}`} 
-                          className={`p-1 border-r border-slate-900/40 ${
-                            isFrozen ? "sticky z-10" : ""
-                          } ${
-                            isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""
-                          } ${tdClass}`} 
-                          style={{ 
-                            width: `${columnWidths[col.name] || 150}px`,
-                            left: leftOffset,
-                            ...tdStyle,
-                          }}
-                        >
-                          {renderGridCellInput()}
-                        </td>
-                      );
-                    })}
-                    <td className="p-1 border-l border-slate-900/40 text-center w-20 print:hidden" style={{ width: "80px" }}>
-                      {isModified && (
-                        <button
-                          onClick={() => handleUndoRow(rIdx)}
-                          className="px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 hover:text-amber-400 border border-amber-500/20 rounded text-[10px] font-bold transition-all opacity-70 animate-pulse cursor-pointer"
-                          title={t.tooltipUndo}
-                        >
-                          {t.undo}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-          {/* [Day 47 작업] 실시간 총합계 및 평균 서머리(Summary [ˈsʌməri]) 행 <tfoot> 렌더링 블록 */}
-          <tfoot className="sticky bottom-0 bg-slate-950 border-t-2 border-cyan-500/80 z-30 shadow-[0_-4px_15px_rgba(6,182,212,0.25)] print:static print:border-t print:shadow-none">
-            {/* 합계(Total [ˈtəʊtl]) 행 */}
-            <tr className="bg-slate-900/90 text-cyan-400 font-bold border-b border-slate-900/60 font-mono select-none">
-              <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40" style={{ width: "48px", left: 0 }}>
-              </td>
-              <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40 text-[10px] text-cyan-500" style={{ width: "48px", left: 48 }}>
-                ∑
-              </td>
-              {flattenedActiveColumns.map((col, cIdx) => {
-                if (col.isComputed) {
-                  return (
-                    <td key={`sum-comp-${col.name}-${cIdx}`} className="p-3 text-right bg-[#0f192b] border-r border-slate-900/40 text-slate-600 italic text-[10px]" style={{ width: `${columnWidths[col.name] || 150}px` }}>
-                      N/A
-                    </td>
-                  );
-                }
-
-                const isFrozen = col.originalIndex < 2;
-                const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
-                const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
-                const isNum = isNumericColumn(col.type);
-
-                let cellText = "";
-                if (col.originalIndex === 0) {
-                  cellText = currentLanguage === "ko" ? "합계" : "Sum";
-                } else if (isNum) {
-                  cellText = formatNumberWithCommas(String(footerSummaries.sums[col.name] ?? 0));
-                }
-
-                return (
-                  <td
-                    key={`sum-cell-${col.name}-${cIdx}`}
-                    className={`p-3 border-r border-slate-900/40 ${isFrozen ? "sticky z-10 bg-[#090e1c]" : ""} ${isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""} ${isNum ? "text-right" : "text-center text-slate-500"}`}
-                    style={{
-                      width: `${columnWidths[col.name] || 150}px`,
-                      left: leftOffset,
-                    }}
-                  >
-                    {cellText}
-                  </td>
-                );
-              })}
-              <td className="p-3 border-l border-slate-900/40 bg-slate-900 text-center w-20 print:hidden" style={{ width: "80px" }}>
-              </td>
-            </tr>
-
-            {/* 평균(Average [ˈævərɪdʒ]) 행 */}
-            <tr className="bg-slate-900/90 text-amber-400 font-bold font-mono select-none">
-              <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40" style={{ width: "48px", left: 0 }}>
-              </td>
-              <td className="p-3 text-center sticky left-0 z-30 bg-[#090e1c] border-r border-slate-900/40 text-[10px] text-amber-500" style={{ width: "48px", left: 48 }}>
-                μ
-              </td>
-              {flattenedActiveColumns.map((col, cIdx) => {
-                if (col.isComputed) {
-                  return (
-                    <td key={`avg-comp-${col.name}-${cIdx}`} className="p-3 text-right bg-[#0f192b] border-r border-slate-900/40 text-slate-600 italic text-[10px]" style={{ width: `${columnWidths[col.name] || 150}px` }}>
-                      N/A
-                    </td>
-                  );
-                }
-
-                const isFrozen = col.originalIndex < 2;
-                const leftOffset = isFrozen ? getFrozenLeftOffset(col.originalIndex) : undefined;
-                const isLastFrozen = isFrozen && visibleFrozenColumns.length > 0 && visibleFrozenColumns[visibleFrozenColumns.length - 1].name === col.name;
-                const isNum = isNumericColumn(col.type);
-
-                let cellText = "";
-                if (col.originalIndex === 0) {
-                  cellText = currentLanguage === "ko" ? "평균" : "Avg";
-                } else if (isNum) {
-                  const avgVal = footerSummaries.avgs[col.name] ?? 0;
-                  cellText = formatNumberWithCommas(String(Number(avgVal.toFixed(2))));
-                }
-
-                return (
-                  <td
-                    key={`avg-cell-${col.name}-${cIdx}`}
-                    className={`p-3 border-r border-slate-900/40 ${isFrozen ? "sticky z-10 bg-[#090e1c]" : ""} ${isLastFrozen ? "border-r-2 border-r-indigo-500/80" : ""} ${isNum ? "text-right" : "text-center text-slate-500"}`}
-                    style={{
-                      width: `${columnWidths[col.name] || 150}px`,
-                      left: leftOffset,
-                    }}
-                  >
-                    {cellText}
-                  </td>
-                );
-              })}
-              <td className="p-3 border-l border-slate-900/40 bg-slate-900 text-center w-20 print:hidden" style={{ width: "80px" }}>
-              </td>
-            </tr>
-          </tfoot>
-        </table>
+        <GridErrorBoundary
+          onReset={handleResetBoundary}
+          fallback={ErrorFallback}
+        >
+          <GridTableInner
+            isLoading={isLoading}
+            totalTableWidth={totalTableWidth}
+            parsedData={parsedData}
+            visibleColumns={visibleColumns}
+            columnWidths={columnWidths}
+            flattenedActiveColumns={flattenedActiveColumns}
+            gridData={gridData}
+            filteredRows={filteredRows}
+            validationErrors={validationErrors}
+            selectedRowIndex={selectedRowIndex}
+            selectedRowIds={selectedRowIds}
+            argValues={argValues}
+            currentLanguage={currentLanguage}
+            footerSummaries={footerSummaries}
+            visibleFrozenColumns={visibleFrozenColumns}
+            isAllFilteredSelected={isAllFilteredSelected}
+            handleToggleAll={handleToggleAll}
+            handleToggleRow={handleToggleRow}
+            onSelectRow={onSelectRow}
+            handleSort={handleSort}
+            handleResizeStart={handleResizeStart}
+            handleUndoRow={handleUndoRow}
+            getFrozenLeftOffset={getFrozenLeftOffset}
+            getAlignClass={getAlignClass}
+            translateColLabel={translateColLabel}
+            getCellStyleAndClass={getCellStyleAndClass}
+            setGridData={setGridData}
+            sortConfig={sortConfig}
+            filterKeyword={filterKeyword}
+            initialGridDataRef={initialGridDataRef}
+            t={t}
+            totalVisibleColSpan={totalVisibleColSpan}
+          />
+        </GridErrorBoundary>
       </div>
 
       {/* [Day 39 작업] 상세 내역 (Detail View) 서브 뷰포트 레이아웃 */}
