@@ -7,6 +7,7 @@
 import React from "react";
 import { ParsedPB, ColumnInfo } from "../types";
 import { isNumericColumn, formatNumberWithCommas, evaluateDWExpression } from "../utils/expression";
+import SearchPreset from "./SearchPreset";
 
 interface GridPreviewProps {
   parsedData: ParsedPB;
@@ -16,6 +17,8 @@ interface GridPreviewProps {
   // [Day 27 작업] 행 선택 상태 정의 구역
   selectedRowIndex: number;
   onSelectRow: (rIdx: number) => void;
+  // [Day 56 작업] 검색 프리셋 복원 콜백 추가
+  onRestorePreset?: (presetQuery: { [key: string]: any }) => void;
 }
 
 const ALIGN_MAP: { [key: string]: string } = {
@@ -1190,6 +1193,7 @@ export default function GridPreview({
   argValues,
   selectedRowIndex,
   onSelectRow,
+  onRestorePreset,
 }: GridPreviewProps) {
   // [Day 44 작업] 다중 선택 체크박스 상태 모델 정의 (Set 구조로 인덱스 추적)
   const [selectedRowIds, setSelectedRowIds] = React.useState<Set<string>>(new Set());
@@ -3113,6 +3117,27 @@ export default function GridPreview({
               className="bg-slate-950 border border-slate-800 hover:border-indigo-500/50 focus:border-indigo-500 text-xs text-slate-300 placeholder-slate-600 rounded px-3 py-1.5 w-48 focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all"
             />
           </div>
+
+          {/* [Day 56 작업] 사용자 정의 검색 조건 프리셋(Search Query Preset) 저장/복원 컴포넌트 마운트 */}
+          <SearchPreset
+            currentQuery={{
+              as_dept: selectedDept,
+              as_status: argValues.as_status || "Closed",
+              an_sales: argValues.an_sales || "50000",
+              keyword: searchKeyword,
+            }}
+            onRestorePreset={(presetQuery) => {
+              if (presetQuery.as_dept) {
+                setSelectedDept(presetQuery.as_dept);
+              }
+              if (presetQuery.keyword !== undefined) {
+                setSearchKeyword(presetQuery.keyword);
+              }
+              if (onRestorePreset) {
+                onRestorePreset(presetQuery);
+              }
+            }}
+          />
         </div>
 
         <button

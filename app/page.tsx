@@ -345,6 +345,20 @@ export default function PBBridgeDashboard() {
     }
   };
 
+  // [Day 56 작업] 검색 조건 프리셋 저장/복원 시 대시보드 마스터 상태 일괄 동기화 핸들러
+  const handleRestorePreset = (presetQuery: { [key: string]: any }) => {
+    if (presetQuery.as_dept) {
+      setSelectedDept(presetQuery.as_dept);
+    }
+    setArgValues((prev) => ({
+      ...prev,
+      ...(presetQuery.as_dept ? { as_dept: presetQuery.as_dept } : {}),
+      ...(presetQuery.as_status ? { as_status: presetQuery.as_status } : {}),
+      ...(presetQuery.an_sales ? { an_sales: presetQuery.an_sales } : {}),
+    }));
+    setSelectedRowIndex(0);
+  };
+
   // SQL 모의 실행
   const handleExecuteSql = () => {
     if (!parsedData.retrieveQuery) return;
@@ -659,6 +673,7 @@ export default function PBBridgeDashboard() {
                       argValues={argValues}
                       selectedRowIndex={selectedRowIndex}
                       onSelectRow={handleSelectRow}
+                      onRestorePreset={handleRestorePreset}
                     />
                   </div>
 
@@ -719,6 +734,7 @@ export default function PBBridgeDashboard() {
                     argValues={argValues}
                     selectedRowIndex={selectedRowIndex}
                     onSelectRow={handleSelectRow}
+                    onRestorePreset={handleRestorePreset}
                   />
                 </div>
               )}
