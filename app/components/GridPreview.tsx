@@ -2823,7 +2823,7 @@ export default function GridPreview({
   };
 
   return (
-    <section className="bg-slate-950/80 border border-slate-900 rounded-2xl overflow-hidden shadow-2xl p-5 flex flex-col gap-4 relative print:p-0 print:border-none print:shadow-none print:bg-white print:text-black">
+    <section className="bg-slate-950/80 border border-slate-900 rounded-2xl shadow-2xl p-5 flex flex-col gap-4 relative print:p-0 print:border-none print:shadow-none print:bg-white print:text-black">
       {/* [Day 43 작업] 인쇄 전용 전역 스타일 정의 */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
@@ -3083,7 +3083,7 @@ export default function GridPreview({
       </div>
 
       {/* [Day 32 작업] 파워빌더 Retrieval Argument 조회 조건 바 */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0d1527]/90 border border-indigo-950/60 rounded-xl shadow-lg relative overflow-hidden print:hidden">
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#0d1527]/90 border border-indigo-950/60 rounded-xl shadow-lg relative z-20 print:hidden">
         <div className="absolute -top-10 -left-10 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none"></div>
         <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl pointer-events-none"></div>
 
